@@ -1,0 +1,30 @@
+# Workspace-level tooling config. Services keep their own pyproject for deps;
+# lint/type/test rules live here so libs/ and every service pick them up.
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["**/alembic/versions/*"]  # generated migrations
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
+ignore = [
+    "E501",   # line length — ruff-format handles wraps we accept
+    "B008",   # FastAPI's Depends() in defaults is idiomatic
+]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+mypy_path = "libs"
+exclude = ["services/plt/alembic/"]
+
+# Third-party libs without type stubs — ignore missing imports rather than fail
+# strict-mode over infra we can't type.
+[[tool.mypy.overrides]]
+module = ["asyncpg.*", "alembic.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

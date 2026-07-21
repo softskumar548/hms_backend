@@ -1,0 +1,53 @@
+name: CI
+
+# The isolation test is the gate. A failure here blocks merge — patient-data
+# tenant isolation (PLT-002) must be proven on every change.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: hms
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres_change_me
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d hms"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deps
+        run: pip install fastapi "sqlalchemy[asyncio]" asyncpg pydantic pytest pytest-asyncio httpx ruff
+
+      - name: Apply schema + RLS
+        env:
+          PGPASSWORD: postgres_change_me
+        run: |
+          sudo apt-get update && sudo apt-get install -y postgresql-client
+          psql -h localhost -U postgres -d hms -f infra/postgres/init.sql
+
+      - name: Lint
+        run: ruff check libs services || true   # non-blocking initially
+
+      - name: Isolation + smoke tests (THE GATE)
+        env:
+          DATABASE_URL: postgresql+asyncpg://hms_app:app_password_change_me@localhost:5432/hms
+          # Admin URL for provisioning tenants in conftest (INSERT on `tenant` is
+          # not granted to hms_app — least privilege).
+          SEED_DATABASE_URL: postgresql+asyncpg://postgres:postgres_change_me@localhost:5432/hms
+          PYTHONPATH: libs
+        run: pytest -q tests

@@ -1,0 +1,20 @@
+{
+  "folders": [
+    {
+      "name": "HMS Backend (hms-platform)",
+      "path": "."
+    },
+    {
+      "name": "HMS Frontend (hms-web)",
+      "path": "d:\\HMS\\files\\hms-web\\hms-web"
+    }
+  ],
+  "settings": {
+    "search.exclude": {
+      "**/node_modules": true,
+      "**/.venv": true,
+      "**/.pytest_cache": true,
+      "**/dist": true
+    }
+  }
+}
