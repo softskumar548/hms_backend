@@ -31,14 +31,17 @@ jobs:
           python-version: "3.12"
 
       - name: Install deps
-        run: pip install fastapi "sqlalchemy[asyncio]" asyncpg pydantic pytest pytest-asyncio httpx ruff
+        run: pip install -e "services/plt[dev]"
 
-      - name: Apply schema + RLS
+      - name: Apply schema + RLS (baseline init + all migrations)
         env:
           PGPASSWORD: postgres_change_me
+          # Migrations run privileged DDL (CREATE POLICY, GRANT), so admin URL.
+          ALEMBIC_DATABASE_URL: postgresql+asyncpg://postgres:postgres_change_me@localhost:5432/hms
         run: |
           sudo apt-get update && sudo apt-get install -y postgresql-client
           psql -h localhost -U postgres -d hms -f infra/postgres/init.sql
+          cd services/plt && alembic upgrade head
 
       - name: Lint
         run: ruff check libs services || true   # non-blocking initially

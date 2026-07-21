@@ -21,6 +21,29 @@ DATABASE_URL = os.environ.get(
     "postgresql+asyncpg://hms_app:app_password_change_me@localhost:5432/hms",
 )
 
+# Admin role for tenant provisioning — hms_app has SELECT on `tenant`, not
+# INSERT (least privilege, PLT-002), so provisioning runs as the superuser.
+ADMIN_DATABASE_URL = os.environ.get(
+    "SEED_DATABASE_URL",
+    "postgresql+asyncpg://postgres:postgres_change_me@localhost:5432/hms",
+)
+
+
+@pytest_asyncio.fixture(scope="function", autouse=True)
+async def _provision_test_tenants():
+    """Ensure the two test tenants exist. Idempotent so it's safe to re-run."""
+    engine = create_async_engine(ADMIN_DATABASE_URL)
+    admin_sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with admin_sessionmaker() as s:
+        await s.execute(text(
+            "INSERT INTO tenant (id, name) VALUES "
+            "('t_a','Tenant A'),('t_b','Tenant B') "
+            "ON CONFLICT (id) DO NOTHING"
+        ))
+        await s.commit()
+    await engine.dispose()
+    yield
+
 
 @pytest_asyncio.fixture()
 async def sessionmaker_():
@@ -117,6 +140,52 @@ async def test_write_denied_when_tenant_id_mismatches_context(sessionmaker_):
             await s.execute(text(
                 "INSERT INTO patient (tenant_id, given_name, family_name) "
                 "VALUES ('t_b','Mallory','Impostor')"))
+            await s.commit()
+
+
+@pytest.mark.asyncio
+async def test_audit_event_isolated_and_append_only(sessionmaker_):
+    """PLT-002 + PLT-005: audit_event is tenant-scoped like every other table,
+    and append-only for the app role (no UPDATE/DELETE grant). Added in N1-01
+    when the coverage audit found it missing from this gate."""
+    from sqlalchemy.exc import DBAPIError, ProgrammingError
+
+    async with sessionmaker_() as s:
+        await _set_tenant(s, "t_a")
+        await s.execute(text(
+            "INSERT INTO audit_event (tenant_id, actor_user_id, actor_role, action, resource_type, context_note) "
+            "VALUES ('t_a', 'u_a', 'physician', 'read', 'patient', 'iso_audit_a')"))
+        await s.commit()
+    async with sessionmaker_() as s:
+        await _set_tenant(s, "t_b")
+        await s.execute(text(
+            "INSERT INTO audit_event (tenant_id, actor_user_id, actor_role, action, resource_type, context_note) "
+            "VALUES ('t_b', 'u_b', 'physician', 'read', 'patient', 'iso_audit_b')"))
+        await s.commit()
+
+    async with sessionmaker_() as s:
+        await _set_tenant(s, "t_a")
+        notes = [r[0] for r in (await s.execute(
+            text("SELECT context_note FROM audit_event"))).all()]
+        assert "iso_audit_a" in notes
+        assert "iso_audit_b" not in notes, "ISOLATION BREACH: tenant A saw tenant B audit trail"
+
+    async with sessionmaker_() as s:
+        rows = (await s.execute(text("SELECT * FROM audit_event"))).all()
+        assert rows == [], "RLS did not fail closed on audit_event without tenant context"
+
+    # Append-only: the app role must not be able to UPDATE or DELETE audit rows.
+    async with sessionmaker_() as s:
+        await _set_tenant(s, "t_a")
+        with pytest.raises((DBAPIError, ProgrammingError)):
+            await s.execute(text(
+                "UPDATE audit_event SET context_note = 'tampered' WHERE context_note = 'iso_audit_a'"))
+            await s.commit()
+    async with sessionmaker_() as s:
+        await _set_tenant(s, "t_a")
+        with pytest.raises((DBAPIError, ProgrammingError)):
+            await s.execute(text(
+                "DELETE FROM audit_event WHERE context_note = 'iso_audit_a'"))
             await s.commit()
 
 
