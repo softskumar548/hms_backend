@@ -227,18 +227,26 @@ class MockAsyncSession:
         bind_vals = {}
         if hasattr(statement, "_bindparams"):
             for k, v in statement._bindparams.items():
-                bind_vals[k] = v.effective_value
+                val = getattr(v, "value", None)
+                if val is None and hasattr(v, "effective_value"):
+                    val = getattr(v, "effective_value", None)
+                if val is not None:
+                    bind_vals[k] = val
         bind_vals.update(kwargs)
 
         # 1. SET LOCAL tenant context
         if "set local app.tenant_id" in sql or "app.tenant_id" in sql:
-            tid = bind_vals.get("tid") or bind_vals.get("t")
+            tid = bind_vals.get("tid") or bind_vals.get("t") or bind_vals.get("tenant_id")
+            if not tid and "=" in sql:
+                raw_val = sql.split("=")[-1].strip(" ';\"")
+                if raw_val and not raw_val.startswith(":"):
+                    tid = raw_val
             if tid:
-                self.tenant_id = tid
+                self.tenant_id = str(tid)
             return MockResult([])
 
-        # 2. gen_random_uuid()
-        if "gen_random_uuid()" in sql:
+        # 2. gen_random_uuid() (SELECT only)
+        if "select gen_random_uuid()" in sql:
             return MockResult([{"val": str(uuid.uuid4())}])
 
         # 3. Specific join query for clinic queue
@@ -274,8 +282,12 @@ class MockAsyncSession:
                     break
             
             if table_name and table_name in self._tables:
-                new_row = {"id": bind_vals.get("id", str(uuid.uuid4())), "tenant_id": self.tenant_id}
+                tid_val = bind_vals.get("tenant_id") or bind_vals.get("tid") or self.tenant_id
+                row_id = bind_vals.get("id") or str(uuid.uuid4())
+                new_row = {"id": str(row_id), "tenant_id": str(tid_val)}
                 new_row.update(bind_vals)
+                new_row["id"] = str(row_id)
+                new_row["tenant_id"] = str(tid_val)
                 self._tables[table_name].append(new_row)
                 return MockResult([new_row])
             return MockResult([])
@@ -331,11 +343,16 @@ class MockAsyncSession:
                             if q_val in str(r.get("name", "")).lower() or q_val in str(r.get("generic_name", "")).lower()
                         ]
 
+                if "count(" in sql:
+                    return MockResult([{"count": len(rows)}])
+
                 return MockResult(rows)
             return MockResult([])
             
         return MockResult([])
 
+    def begin(self):
+        return self
     async def commit(self):
         pass
     async def rollback(self):

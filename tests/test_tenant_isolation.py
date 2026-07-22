@@ -321,6 +321,141 @@ async def test_all_module_tables_tenant_isolation(sessionmaker_):
     # 2. Define child tables list with all columns, values, check parameters
     child_tables = [
         {
+            "table": "site",
+            "cols": "id, tenant_id, name",
+            "select_col": "name",
+            "check_val_a": "Site A Test",
+            "check_val_b": "Site B Test",
+            "params_a": {"id": "site_test_a", "name": "Site A Test"},
+            "params_b": {"id": "site_test_b", "name": "Site B Test"}
+        },
+        {
+            "table": "practitioner",
+            "cols": "id, tenant_id, name",
+            "select_col": "name",
+            "check_val_a": "Doc A Test",
+            "check_val_b": "Doc B Test",
+            "params_a": {"id": "doc_test_a", "name": "Doc A Test"},
+            "params_b": {"id": "doc_test_b", "name": "Doc B Test"}
+        },
+        {
+            "table": "service",
+            "cols": "id, tenant_id, name, duration_minutes",
+            "select_col": "name",
+            "check_val_a": "Svc A Test",
+            "check_val_b": "Svc B Test",
+            "params_a": {"id": "svc_test_a", "name": "Svc A Test", "duration_minutes": 15},
+            "params_b": {"id": "svc_test_b", "name": "Svc B Test", "duration_minutes": 30}
+        },
+        {
+            "table": "room",
+            "cols": "id, site_id, tenant_id, name",
+            "select_col": "name",
+            "check_val_a": "Room A Test",
+            "check_val_b": "Room B Test",
+            "params_a": {"id": "room_test_a", "site_id": ids_a["site_id"], "name": "Room A Test"},
+            "params_b": {"id": "room_test_b", "site_id": ids_b["site_id"], "name": "Room B Test"}
+        },
+        {
+            "table": "appointment",
+            "cols": "id, tenant_id, patient_id, practitioner_id, site_id, room_id, service_id, status, start_time, end_time",
+            "select_col": "status",
+            "check_val_a": "ARRIVED_A",
+            "check_val_b": "ARRIVED_B",
+            "params_a": {"id": f"{ids_a['patient_id'][:8]}-0000-0000-0000-000000000099", "patient_id": ids_a["patient_id"], "practitioner_id": ids_a["doc_id"], "site_id": ids_a["site_id"], "room_id": ids_a["room_id"], "service_id": ids_a["svc_id"], "status": "ARRIVED_A", "start_time": datetime.now(), "end_time": datetime.now()},
+            "params_b": {"id": f"{ids_b['patient_id'][:8]}-0000-0000-0000-000000000099", "patient_id": ids_b["patient_id"], "practitioner_id": ids_b["doc_id"], "site_id": ids_b["site_id"], "room_id": ids_b["room_id"], "service_id": ids_b["svc_id"], "status": "ARRIVED_B", "start_time": datetime.now(), "end_time": datetime.now()}
+        },
+        {
+            "table": "encounter",
+            "cols": "id, tenant_id, appointment_id, patient_id, practitioner_id, site_id, status",
+            "select_col": "status",
+            "check_val_a": "open_a",
+            "check_val_b": "open_b",
+            "params_a": {"id": f"{ids_a['patient_id'][:8]}-0000-0000-0000-000000000098", "appointment_id": ids_a["app_id"], "patient_id": ids_a["patient_id"], "practitioner_id": ids_a["doc_id"], "site_id": ids_a["site_id"], "status": "open_a"},
+            "params_b": {"id": f"{ids_b['patient_id'][:8]}-0000-0000-0000-000000000098", "appointment_id": ids_b["app_id"], "patient_id": ids_b["patient_id"], "practitioner_id": ids_b["doc_id"], "site_id": ids_b["site_id"], "status": "open_b"}
+        },
+        {
+            "table": "patient_coverage",
+            "cols": "id, tenant_id, patient_id, scheme_type, plan_name, member_id, validity_start, validity_end, patient_share_percent",
+            "select_col": "plan_name",
+            "check_val_a": "Plan A Test",
+            "check_val_b": "Plan B Test",
+            "params_a": {"id": f"{ids_a['patient_id'][:8]}-0000-0000-0000-000000000097", "patient_id": ids_a["patient_id"], "scheme_type": "private", "plan_name": "Plan A Test", "member_id": "MEMA", "validity_start": "2026-01-01", "validity_end": "2030-01-01", "patient_share_percent": 10},
+            "params_b": {"id": f"{ids_b['patient_id'][:8]}-0000-0000-0000-000000000097", "patient_id": ids_b["patient_id"], "scheme_type": "private", "plan_name": "Plan B Test", "member_id": "MEMB", "validity_start": "2026-01-01", "validity_end": "2030-01-01", "patient_share_percent": 20}
+        },
+        {
+            "table": "invoice",
+            "cols": "id, tenant_id, patient_id, encounter_id, status",
+            "select_col": "status",
+            "check_val_a": "draft_a",
+            "check_val_b": "draft_b",
+            "params_a": {"id": f"{ids_a['patient_id'][:8]}-0000-0000-0000-000000000096", "patient_id": ids_a["patient_id"], "encounter_id": ids_a["enc_id"], "status": "draft_a"},
+            "params_b": {"id": f"{ids_b['patient_id'][:8]}-0000-0000-0000-000000000096", "patient_id": ids_b["patient_id"], "encounter_id": ids_b["enc_id"], "status": "draft_b"}
+        },
+        {
+            "table": "medication_catalog",
+            "cols": "id, tenant_id, name, generic_name, form, strength",
+            "select_col": "name",
+            "check_val_a": "Med A Test",
+            "check_val_b": "Med B Test",
+            "params_a": {"id": "med_t_a", "name": "Med A Test", "generic_name": "Gen A", "form": "tablet", "strength": "10mg"},
+            "params_b": {"id": "med_t_b", "name": "Med B Test", "generic_name": "Gen B", "form": "tablet", "strength": "20mg"}
+        },
+        {
+            "table": "lab_catalog",
+            "cols": "id, tenant_id, test_code, name",
+            "select_col": "name",
+            "check_val_a": "Lab Test A",
+            "check_val_b": "Lab Test B",
+            "params_a": {"id": "lab_t_a", "test_code": "CODE_A", "name": "Lab Test A"},
+            "params_b": {"id": "lab_t_b", "test_code": "CODE_B", "name": "Lab Test B"}
+        },
+        {
+            "table": "lab_order",
+            "cols": "id, tenant_id, patient_id, practitioner_id, encounter_id, status",
+            "select_col": "status",
+            "check_val_a": "ordered_a",
+            "check_val_b": "ordered_b",
+            "params_a": {"id": f"{ids_a['patient_id'][:8]}-0000-0000-0000-000000000095", "patient_id": ids_a["patient_id"], "practitioner_id": ids_a["doc_id"], "encounter_id": ids_a["enc_id"], "status": "ordered_a"},
+            "params_b": {"id": f"{ids_b['patient_id'][:8]}-0000-0000-0000-000000000095", "patient_id": ids_b["patient_id"], "practitioner_id": ids_b["doc_id"], "encounter_id": ids_b["enc_id"], "status": "ordered_b"}
+        },
+        {
+            "table": "prescription",
+            "cols": "id, tenant_id, patient_id, practitioner_id, encounter_id, status",
+            "select_col": "status",
+            "check_val_a": "draft_rx_a",
+            "check_val_b": "draft_rx_b",
+            "params_a": {"id": f"{ids_a['patient_id'][:8]}-0000-0000-0000-000000000094", "patient_id": ids_a["patient_id"], "practitioner_id": ids_a["doc_id"], "encounter_id": ids_a["enc_id"], "status": "draft_rx_a"},
+            "params_b": {"id": f"{ids_b['patient_id'][:8]}-0000-0000-0000-000000000094", "patient_id": ids_b["patient_id"], "practitioner_id": ids_b["doc_id"], "encounter_id": ids_b["enc_id"], "status": "draft_rx_b"}
+        },
+        {
+            "table": "charge_master",
+            "cols": "id, tenant_id, code, name, category, standard_price",
+            "select_col": "name",
+            "check_val_a": "Charge A Test",
+            "check_val_b": "Charge B Test",
+            "params_a": {"id": "chg_t_a", "code": "C_A", "name": "Charge A Test", "category": "consultation", "standard_price": 100},
+            "params_b": {"id": "chg_t_b", "code": "C_B", "name": "Charge B Test", "category": "consultation", "standard_price": 200}
+        },
+        {
+            "table": "webhook_subscription",
+            "cols": "id, tenant_id, event_type, url, secret_key",
+            "select_col": "event_type",
+            "check_val_a": "evt_type_a",
+            "check_val_b": "evt_type_b",
+            "params_a": {"id": f"{ids_a['patient_id'][:8]}-0000-0000-0000-000000000093", "event_type": "evt_type_a", "url": "http://a.com", "secret_key": "sec_a"},
+            "params_b": {"id": f"{ids_b['patient_id'][:8]}-0000-0000-0000-000000000093", "event_type": "evt_type_b", "url": "http://b.com", "secret_key": "sec_b"}
+        },
+        {
+            "table": "prerequisite_definition",
+            "cols": "id, tenant_id, code, description",
+            "select_col": "description",
+            "check_val_a": "Prereq Desc A",
+            "check_val_b": "Prereq Desc B",
+            "params_a": {"id": "prq_t_a", "code": "PRQ_A", "description": "Prereq Desc A"},
+            "params_b": {"id": "prq_t_b", "code": "PRQ_B", "description": "Prereq Desc B"}
+        },
+        {
             "table": "practitioner_availability",
             "cols": "practitioner_id, site_id, tenant_id, day_of_week, start_time, end_time",
             "select_col": "day_of_week",

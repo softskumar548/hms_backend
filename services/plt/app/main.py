@@ -9,7 +9,7 @@ from __future__ import annotations
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from .routers import patients, scheduling, emr, rx, ord, bil, por, rpt, integration
+from .routers import patients, scheduling, emr, rx, ord, bil, por, rpt, integration, tenants
 
 app = FastAPI(
     title="HMS Platform — PLT service",
@@ -26,6 +26,7 @@ app.include_router(bil.router)
 app.include_router(por.router)
 app.include_router(rpt.router)
 app.include_router(integration.router)
+app.include_router(tenants.router)
 
 
 @app.exception_handler(PermissionError)
