@@ -228,8 +228,8 @@ def map_to_fhir_patient(patient_id: str, body: PatientCreate) -> dict[str, Any]:
         })
 
     # Validate against FHIR R4 standard schema using fhir.resources Pydantic models
-    validated_patient = FHIRPatient.parse_obj(fhir_dict)
-    return validated_patient.dict(exclude_none=True)
+    validated_patient = FHIRPatient.model_validate(fhir_dict)
+    return validated_patient.model_dump(exclude_none=True)
 
 
 @router.get("", response_model=list[PatientOut])

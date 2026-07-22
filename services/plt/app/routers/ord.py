@@ -184,7 +184,7 @@ async def ingest_result(
 
         # Route to unmatched queue if order or patient is missing
         if not body.order_id or not patient_id:
-            payload = body.dict()
+            payload = body.model_dump()
             if payload.get("order_id"):
                 payload["order_id"] = str(payload["order_id"])
             if payload.get("patient_id"):
