@@ -35,14 +35,18 @@ def _load_env_file() -> None:
                 pass
             break
 
-_load_env_file()
-
 DATABASE_URL = os.environ.get(
     "DATABASE_URL",
     "postgresql+asyncpg://hms_app:app_password_change_me@postgres:5432/hms",
 )
 
-engine = create_async_engine(DATABASE_URL, echo=False, pool_pre_ping=True)
+from sqlalchemy.pool import NullPool
+
+if os.getenv("ENV") == "test":
+    engine = create_async_engine(DATABASE_URL, echo=False, poolclass=NullPool)
+else:
+    engine = create_async_engine(DATABASE_URL, echo=False, pool_pre_ping=True)
+
 SessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
@@ -78,26 +82,7 @@ async def verify_postgres_rls_startup() -> None:
 
 
 async def get_session() -> AsyncSession:
-    """FastAPI dependency: yields a session. Refuses to serve without live database unless gated in unit tests."""
-    try:
-        async with SessionLocal() as session:
-            await session.execute(text("SELECT 1"))
-            yield session
-    except Exception as e:
-        env_mode = os.getenv("ENV", "development").lower()
-        allow_mock = os.getenv("HMS_ALLOW_MOCK_DB", "false").lower() == "true"
-
-        if env_mode == "test" and allow_mock:
-            logger.warning(
-                "⚠️ CRITICAL SECURITY WARNING: Database connection failed. Running with MockAsyncSession fallback enabled via HMS_ALLOW_MOCK_DB=true in ENV=test!"
-            )
-            from tests.mock_db import MockAsyncSession
-            yield MockAsyncSession()
-        else:
-            logger.error(
-                f"FATAL: Database connection failed: {e}. Mock DB fallback is forbidden unless ENV=test and HMS_ALLOW_MOCK_DB=true."
-            )
-            raise RuntimeError(
-                f"Database connection failed: {e}. Live PostgreSQL with Row-Level Security (RLS) is required to serve requests."
-            )
+    """FastAPI dependency: yields a session."""
+    async with SessionLocal() as session:
+        yield session
 

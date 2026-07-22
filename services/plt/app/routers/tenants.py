@@ -60,10 +60,10 @@ async def provision_tenant(
     """Provision a new hospital/clinic tenant (TEN-101). Operator gated."""
     _require_operator(ctx)
 
-    async with session.begin():
+    async with tenant_session(session, ctx) as s:
         # Check if tenant ID already exists
         existing = (
-            await session.execute(
+            await s.execute(
                 text("SELECT id FROM tenant WHERE id = :id").bindparams(id=body.id)
             )
         ).mappings().one_or_none()
@@ -76,10 +76,10 @@ async def provision_tenant(
 
         # Insert new tenant record with status='provisioned'
         result = (
-            await session.execute(
+            await s.execute(
                 text(
                     "INSERT INTO tenant (id, name, region, locale, currency, features, status) "
-                    "VALUES (:id, :name, :region, :locale, :currency, :features, 'provisioned') "
+                    "VALUES (:id, :name, :region, :locale, :currency, CAST(:features AS jsonb), 'provisioned') "
                     "RETURNING id, name, region, locale, currency, features, status, created_at"
                 ).bindparams(
                     id=body.id,
@@ -93,7 +93,7 @@ async def provision_tenant(
         ).mappings().one()
 
         await audit_record(
-            session=session,
+            session=s,
             ctx=ctx,
             action="create",
             resource_type="tenant",
@@ -122,9 +122,9 @@ async def list_tenants(
     """List all registered tenants (TEN-101). Operator gated."""
     _require_operator(ctx)
 
-    async with session.begin():
+    async with tenant_session(session, ctx) as s:
         rows = (
-            await session.execute(
+            await s.execute(
                 text("SELECT id, name, region, locale, currency, features, status, created_at FROM tenant ORDER BY created_at DESC")
             )
         ).mappings().all()
@@ -157,9 +157,9 @@ async def get_tenant_metrics(
     """Multi-tenant platform aggregate usage metrics (TEN-301). Operator gated."""
     _require_operator(ctx)
 
-    async with session.begin():
+    async with tenant_session(session, ctx) as s:
         rows = (
-            await session.execute(
+            await s.execute(
                 text("SELECT id, name, status FROM tenant")
             )
         ).mappings().all()
@@ -167,10 +167,10 @@ async def get_tenant_metrics(
         metrics_list = []
         for r in rows:
             tid = r["id"]
-            pt_res = (await session.execute(text("SELECT COUNT(*) FROM patient WHERE tenant_id = :tid").bindparams(tid=tid))).scalar() or 0
-            site_res = (await session.execute(text("SELECT COUNT(*) FROM site WHERE tenant_id = :tid").bindparams(tid=tid))).scalar() or 0
-            room_res = (await session.execute(text("SELECT COUNT(*) FROM room WHERE tenant_id = :tid").bindparams(tid=tid))).scalar() or 0
-            svc_res = (await session.execute(text("SELECT COUNT(*) FROM service WHERE tenant_id = :tid").bindparams(tid=tid))).scalar() or 0
+            pt_res = (await s.execute(text("SELECT COUNT(*) FROM patient WHERE tenant_id = :tid").bindparams(tid=tid))).scalar() or 0
+            site_res = (await s.execute(text("SELECT COUNT(*) FROM site WHERE tenant_id = :tid").bindparams(tid=tid))).scalar() or 0
+            room_res = (await s.execute(text("SELECT COUNT(*) FROM room WHERE tenant_id = :tid").bindparams(tid=tid))).scalar() or 0
+            svc_res = (await s.execute(text("SELECT COUNT(*) FROM service WHERE tenant_id = :tid").bindparams(tid=tid))).scalar() or 0
 
             def _to_int(val: Any) -> int:
                 if isinstance(val, int):
@@ -211,9 +211,9 @@ async def get_tenant(
     """Retrieve details for a specific tenant (TEN-101). Operator gated."""
     _require_operator(ctx)
 
-    async with session.begin():
+    async with tenant_session(session, ctx) as s:
         row = (
-            await session.execute(
+            await s.execute(
                 text("SELECT id, name, region, locale, currency, features, status, created_at FROM tenant WHERE id = :id").bindparams(id=tenant_id)
             )
         ).mappings().one_or_none()
@@ -249,9 +249,9 @@ async def update_tenant_status(
     """Update tenant lifecycle status (TEN-101). Operator gated."""
     _require_operator(ctx)
 
-    async with session.begin():
+    async with tenant_session(session, ctx) as s:
         row = (
-            await session.execute(
+            await s.execute(
                 text("SELECT id FROM tenant WHERE id = :id").bindparams(id=tenant_id)
             )
         ).mappings().one_or_none()
@@ -263,7 +263,7 @@ async def update_tenant_status(
             )
 
         updated_res = (
-            await session.execute(
+            await s.execute(
                 text(
                     "UPDATE tenant SET status = :status WHERE id = :id "
                     "RETURNING id, name, region, locale, currency, features, status, created_at"
@@ -278,7 +278,7 @@ async def update_tenant_status(
         updated["status"] = body.status
 
         await audit_record(
-            session=session,
+            session=s,
             ctx=ctx,
             action="update",
             resource_type="tenant_status",
@@ -309,7 +309,7 @@ async def configure_setup_wizard(
     """Setup Wizard configuration API: seed sites, rooms, services (TEN-104). Operator gated."""
     _require_operator(ctx)
 
-    async with tenant_session(session, ctx) as s:
+    async with tenant_session(session, ctx, tenant_id=tenant_id) as s:
         # Seed sites
         for st in body.sites:
             await s.execute(
@@ -364,9 +364,9 @@ async def invite_staff(
     """Invite staff member to onboarding tenant (TEN-105). Operator gated."""
     _require_operator(ctx)
 
-    async with session.begin():
+    async with tenant_session(session, ctx, tenant_id=tenant_id) as s:
         await audit_record(
-            session=session,
+            session=s,
             ctx=ctx,
             action="create",
             resource_type="staff_invitation",
@@ -392,9 +392,7 @@ async def stage_migration(
     """Stage legacy CSV data for migration (TEN-201). Operator gated."""
     _require_operator(ctx)
 
-    async with tenant_session(session, ctx) as s:
-        await s.execute(text(f"SET LOCAL app.tenant_id = '{tenant_id}'"))
-
+    async with tenant_session(session, ctx, tenant_id=tenant_id) as s:
         staged_count = 0
         for p in body.patients:
             await s.execute(
@@ -435,9 +433,9 @@ async def reconcile_migration(
     session: AsyncSession = Depends(get_session),
 ):
     """Clinician gate reconciliation sign-off (TEN-202). Operator or admin/physician gated."""
-    async with session.begin():
+    async with tenant_session(session, ctx, tenant_id=tenant_id) as s:
         await audit_record(
-            session=session,
+            session=s,
             ctx=ctx,
             action="update",
             resource_type="migration_clinician_gate",
@@ -462,9 +460,7 @@ async def get_readiness_checklist(
     """Evaluate tenant readiness checklist engine (TEN-203). Operator gated."""
     _require_operator(ctx)
 
-    async with tenant_session(session, ctx) as s:
-        # Set tenant session context to target onboarding tenant_id
-        await s.execute(text(f"SET LOCAL app.tenant_id = '{tenant_id}'"))
+    async with tenant_session(session, ctx, tenant_id=tenant_id) as s:
 
         def _to_int(val: Any) -> int:
             if isinstance(val, int):
@@ -538,9 +534,9 @@ async def go_live(
     """Transition tenant state to active Go-Live (TEN-204). Operator gated."""
     _require_operator(ctx)
 
-    async with session.begin():
+    async with tenant_session(session, ctx, tenant_id=tenant_id) as s:
         row = (
-            await session.execute(
+            await s.execute(
                 text("SELECT id, name, region, locale, currency, features FROM tenant WHERE id = :id").bindparams(id=tenant_id)
             )
         ).mappings().one_or_none()
@@ -552,7 +548,7 @@ async def go_live(
             )
 
         updated_res = (
-            await session.execute(
+            await s.execute(
                 text(
                     "UPDATE tenant SET status = 'active' WHERE id = :id "
                     "RETURNING id, name, region, locale, currency, features, status, created_at"
@@ -567,7 +563,7 @@ async def go_live(
         updated["status"] = "active"
 
         await audit_record(
-            session=session,
+            session=s,
             ctx=ctx,
             action="update",
             resource_type="tenant_golive",
@@ -597,10 +593,7 @@ async def export_tenant_fhir(
     """Bulk FHIR R4 dataset export (TEN-208). Operator gated."""
     _require_operator(ctx)
 
-    async with tenant_session(session, ctx) as s:
-        # Set tenant session context to target onboarding tenant_id
-        await s.execute(text(f"SET LOCAL app.tenant_id = '{tenant_id}'"))
-
+    async with tenant_session(session, ctx, tenant_id=tenant_id) as s:
         rows = (
             await s.execute(
                 text("SELECT id, given_name, family_name, dob, gender, phone FROM patient")
@@ -657,10 +650,10 @@ async def create_subscription_invoice(
     """Generate platform SaaS subscription invoice (TEN-302). Operator gated."""
     _require_operator(ctx)
 
-    async with session.begin():
+    async with tenant_session(session, ctx, tenant_id=tenant_id) as s:
         invoice_id = f"INV-{tenant_id.upper()}-202607"
         await audit_record(
-            session=session,
+            session=s,
             ctx=ctx,
             action="create",
             resource_type="subscription_invoice",
@@ -687,12 +680,12 @@ async def process_pre_auth_claim(
     session: AsyncSession = Depends(get_session),
 ):
     """Process Aarogyasri / PMJAY cashless pre-authorization claim (TEN-303 / BIL-004)."""
-    async with session.begin():
+    async with tenant_session(session, ctx, tenant_id=tenant_id) as s:
         claim_id = f"CLM-AP-{body.scheme.upper()}-8821"
         pre_auth_code = f"PA-AP-{body.card_number[-4:]}-OK"
 
         await audit_record(
-            session=session,
+            session=s,
             ctx=ctx,
             action="create",
             resource_type="cashless_pre_auth_claim",
@@ -723,9 +716,9 @@ async def suspend_tenant(
     """Suspend tenant on billing default (TEN-304 / Gate N5-X1). Operator gated."""
     _require_operator(ctx)
 
-    async with session.begin():
+    async with tenant_session(session, ctx, tenant_id=tenant_id) as s:
         row = (
-            await session.execute(
+            await s.execute(
                 text("SELECT id, name, region, locale, currency, features FROM tenant WHERE id = :id").bindparams(id=tenant_id)
             )
         ).mappings().one_or_none()
@@ -736,7 +729,7 @@ async def suspend_tenant(
                 detail=f"Tenant '{tenant_id}' not found",
             )
 
-        await session.execute(
+        await s.execute(
             text("UPDATE tenant SET status = 'suspended' WHERE id = :id").bindparams(id=tenant_id)
         )
 
@@ -744,7 +737,7 @@ async def suspend_tenant(
         updated["status"] = "suspended"
 
         await audit_record(
-            session=session,
+            session=s,
             ctx=ctx,
             action="update",
             resource_type="tenant_suspension",
@@ -775,9 +768,9 @@ async def emergency_override_tenant(
     """Operator emergency override to reinstate suspended tenant (TEN-305). Operator gated."""
     _require_operator(ctx)
 
-    async with session.begin():
+    async with tenant_session(session, ctx, tenant_id=tenant_id) as s:
         row = (
-            await session.execute(
+            await s.execute(
                 text("SELECT id, name, region, locale, currency, features FROM tenant WHERE id = :id").bindparams(id=tenant_id)
             )
         ).mappings().one_or_none()
@@ -788,7 +781,7 @@ async def emergency_override_tenant(
                 detail=f"Tenant '{tenant_id}' not found",
             )
 
-        await session.execute(
+        await s.execute(
             text("UPDATE tenant SET status = 'active' WHERE id = :id").bindparams(id=tenant_id)
         )
 
@@ -796,7 +789,7 @@ async def emergency_override_tenant(
         updated["status"] = "active"
 
         await audit_record(
-            session=session,
+            session=s,
             ctx=ctx,
             action="update",
             resource_type="tenant_emergency_override",

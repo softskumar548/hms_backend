@@ -14,9 +14,11 @@ from app.main import app
 client = TestClient(app)
 
 
+import uuid
+
 def test_end_to_end_tenant_onboarding_journey():
     headers = {"Authorization": "Bearer dev.apollo.operator"}
-    tenant_id = "hospital_n4_onboarding"
+    tenant_id = f"hosp_n4_{uuid.uuid4().hex[:6]}"
 
     # 1. Provision new tenant (TEN-101)
     provision_payload = {

@@ -124,8 +124,8 @@ async def _provision_tenants() -> None:
     await admin_engine.dispose()
 
 
-async def _exec(s, sql: str, **params) -> None:
-    await s.execute(text(sql).bindparams(**params))
+async def _exec(sess, sql: str, **params) -> None:
+    await sess.execute(text(sql).bindparams(**params))
 
 
 async def _seed_tenant(tid: str) -> None:
@@ -133,7 +133,7 @@ async def _seed_tenant(tid: str) -> None:
     today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
 
     async with SessionLocal() as s:  # hms_app role — RLS applies
-        await _exec(s, "SET LOCAL app.tenant_id = :t", t=tid)
+        await _exec(s, "SELECT set_config('app.tenant_id', :t, true)", t=tid)
 
         # --- Facility & catalogs -------------------------------------------
         sites = [f"site_{tid}_main", f"site_{tid}_annex"]
@@ -210,7 +210,7 @@ async def _seed_tenant(tid: str) -> None:
                 "INSERT INTO patient (id, tenant_id, given_name, family_name, dob, phone, gender, "
                 "email, preferred_language, abha_number, aadhaar_last_four, "
                 "referred_by_type, referred_by_name, referred_by_id, created_by) "
-                "VALUES (:id, :t, :g, :f, :dob, :ph, :gen, :em, :lang, :abha, :a4, "
+                "VALUES (CAST(:id AS uuid), :t, :g, :f, :dob, :ph, :gen, :em, :lang, :abha, :a4, "
                 ":rt, :rn, :ri, 'seed') ON CONFLICT (id) DO NOTHING",
                 id=pid, t=tid, g=given, f=family, dob=dob, ph=phone, gen=gender,
                 em=f"{given.lower()}.{family.lower()}{i}@example.invalid", lang="te" if i % 2 else "en",
@@ -226,7 +226,7 @@ async def _seed_tenant(tid: str) -> None:
                     s,
                     "INSERT INTO patient_coverage (id, tenant_id, patient_id, scheme_type, plan_name, "
                     "member_id, validity_start, validity_end, patient_share_percent) "
-                    "VALUES (:id, :t, :p, :sch, :plan, :mem, '2026-01-01', '2027-12-31', :share) "
+                    "VALUES (:id, :t, CAST(:p AS uuid), :sch, :plan, :mem, '2026-01-01', '2027-12-31', :share) "
                     "ON CONFLICT (id) DO NOTHING",
                     id=cov_id, t=tid, p=pid, sch=scheme,
                     plan={"aarogyasri": "Aarogyasri BPL", "pmjay": "PM-JAY", "private": "Star Health"}[scheme],
@@ -234,18 +234,18 @@ async def _seed_tenant(tid: str) -> None:
                     share=0 if scheme in ("aarogyasri", "pmjay") else 20)
 
             if i % 4 == 0:
-                await _exec(s, "INSERT INTO patient_consent (id, tenant_id, patient_id, purpose) "
-                               "VALUES (:id, :t, :p, 'share:abdm') ON CONFLICT (id) DO NOTHING",
-                            id=_uid(tid, "consent", i), t=tid, p=pid)
+                await _exec(s, "INSERT INTO patient_consent (tenant_id, patient_id, purpose) "
+                               "VALUES (:t, CAST(:p AS uuid), 'share:abdm')",
+                            t=tid, p=pid)
             if i % 8 == 0:
-                await _exec(s, "INSERT INTO allergy_intolerance (id, tenant_id, patient_id, substance_display, asserted_by) "
-                               "VALUES (:id, :t, :p, :sub, :doc) ON CONFLICT (id) DO NOTHING",
+                await _exec(s, "INSERT INTO allergy_intolerance (id, tenant_id, patient_id, substance_code, substance_display, severity, asserted_at, asserted_by) "
+                               "VALUES (:id, :t, CAST(:p AS uuid), '91936005', :sub, 'high', now(), :doc) ON CONFLICT (id) DO NOTHING",
                             id=_uid(tid, "allergy", i), t=tid, p=pid,
                             sub=ALLERGIES[i % len(ALLERGIES)], doc=docs[0])
             if i % 3 == 0:
                 code, disp = CONDITIONS[i % len(CONDITIONS)]
                 await _exec(s, "INSERT INTO condition (id, tenant_id, patient_id, code, display) "
-                               "VALUES (:id, :t, :p, :c, :d) ON CONFLICT (id) DO NOTHING",
+                               "VALUES (:id, :t, CAST(:p AS uuid), :c, :d) ON CONFLICT (id) DO NOTHING",
                             id=_uid(tid, "cond", i), t=tid, p=pid, c=code, d=disp)
 
             # --- Appointments: one past-completed for most, plus today/future mix.
@@ -261,7 +261,7 @@ async def _seed_tenant(tid: str) -> None:
                 s,
                 "INSERT INTO appointment (id, tenant_id, patient_id, practitioner_id, site_id, room_id, "
                 "service_id, status, start_time, end_time, referred_by_id, referred_by_name) "
-                "VALUES (:id, :t, :p, :d, :s, :r, :svc, 'COMPLETED', :st, :en, :ri, :rn) "
+                "VALUES (:id, :t, CAST(:p AS uuid), :d, :s, :r, :svc, 'COMPLETED', :st, :en, :ri, :rn) "
                 "ON CONFLICT (id) DO NOTHING",
                 id=app_past, t=tid, p=pid, d=doc, s=site, r=room, svc=svc,
                 st=past_start, en=past_start + timedelta(minutes=svc_mins), ri=ref_id, rn=ref_name)
@@ -271,7 +271,7 @@ async def _seed_tenant(tid: str) -> None:
                 s,
                 "INSERT INTO encounter (id, tenant_id, appointment_id, patient_id, practitioner_id, "
                 "site_id, status, signed_at, signed_by) "
-                "VALUES (:id, :t, :a, :p, :d, :s, 'signed', :sat, :d) ON CONFLICT (id) DO NOTHING",
+                "VALUES (:id, :t, :a, CAST(:p AS uuid), :d, :s, 'signed', :sat, :d) ON CONFLICT (id) DO NOTHING",
                 id=enc_id, t=tid, a=app_past, p=pid, d=doc, s=site,
                 sat=past_start + timedelta(hours=1))
             await _exec(
@@ -284,7 +284,7 @@ async def _seed_tenant(tid: str) -> None:
                                      ("bp_systolic", 110 + i % 40, "mmHg"),
                                      ("temperature", 36 + (i % 3) * 0.5, "C")]:
                 await _exec(s, "INSERT INTO vital_sign (id, tenant_id, encounter_id, patient_id, type, value, unit) "
-                               "VALUES (:id, :t, :e, :p, :ty, :v, :u) ON CONFLICT (id) DO NOTHING",
+                               "VALUES (:id, :t, :e, CAST(:p AS uuid), :ty, :v, :u) ON CONFLICT (id) DO NOTHING",
                             id=_uid(tid, "vital", i, vtype), t=tid, e=enc_id, p=pid,
                             ty=vtype, v=val, u=unit)
 
@@ -294,7 +294,7 @@ async def _seed_tenant(tid: str) -> None:
                 await _exec(
                     s,
                     "INSERT INTO prescription (id, tenant_id, patient_id, practitioner_id, encounter_id, "
-                    "status, signed_at, signed_by) VALUES (:id, :t, :p, :d, :e, 'signed', :sat, :d) "
+                    "status, signed_at, signed_by) VALUES (:id, :t, CAST(:p AS uuid), :d, :e, 'signed', :sat, :d) "
                     "ON CONFLICT (id) DO NOTHING",
                     id=rx_id, t=tid, p=pid, d=doc, e=enc_id, sat=past_start + timedelta(hours=1))
                 for j in range(1 + i % 2):
@@ -314,7 +314,7 @@ async def _seed_tenant(tid: str) -> None:
                 await _exec(
                     s,
                     "INSERT INTO lab_order (id, tenant_id, patient_id, practitioner_id, encounter_id, status) "
-                    "VALUES (:id, :t, :p, :d, :e, 'resulted') ON CONFLICT (id) DO NOTHING",
+                    "VALUES (:id, :t, CAST(:p AS uuid), :d, :e, 'resulted') ON CONFLICT (id) DO NOTHING",
                     id=ord_id, t=tid, p=pid, d=doc, e=enc_id)
                 await _exec(s, "INSERT INTO lab_order_item (id, tenant_id, order_id, test_id) "
                                "VALUES (:id, :t, :o, :l) ON CONFLICT (id) DO NOTHING",
@@ -332,7 +332,7 @@ async def _seed_tenant(tid: str) -> None:
                 s,
                 "INSERT INTO invoice (id, tenant_id, patient_id, encounter_id, status, coverage_id, "
                 "total_amount, payer_responsibility, patient_responsibility) "
-                "VALUES (:id, :t, :p, :e, 'finalized', :c, :tot, :pay, :pat) "
+                "VALUES (:id, :t, CAST(:p AS uuid), :e, 'finalized', :c, :tot, :pay, :pat) "
                 "ON CONFLICT (id) DO NOTHING",
                 id=inv_id, t=tid, p=pid, e=enc_id, c=cov_id,
                 tot=price, pay=payer_share, pat=price - payer_share)
@@ -359,7 +359,7 @@ async def _seed_tenant(tid: str) -> None:
                     s,
                     "INSERT INTO appointment (id, tenant_id, patient_id, practitioner_id, site_id, room_id, "
                     "service_id, status, start_time, end_time, referred_by_id, referred_by_name) "
-                    "VALUES (:id, :t, :p, :d, :s, :r, :svc, :stat, :st, :en, :ri, :rn) "
+                    "VALUES (:id, :t, CAST(:p AS uuid), :d, :s, :r, :svc, :stat, :st, :en, :ri, :rn) "
                     "ON CONFLICT (id) DO NOTHING",
                     id=app_fut, t=tid, p=pid, d=doc, s=site, r=room,
                     svc=f"svc_fu_{tid}" if status == "DRAFT" else svc, stat=status,

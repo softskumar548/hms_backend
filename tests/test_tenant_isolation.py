@@ -53,7 +53,7 @@ async def sessionmaker_():
 
 
 async def _set_tenant(s, tid: str) -> None:
-    await s.execute(text("SET LOCAL app.tenant_id = :t").bindparams(t=tid))
+    await s.execute(text("SELECT set_config('app.tenant_id', :t, true)").bindparams(t=tid))
 
 
 @pytest.mark.asyncio
@@ -109,14 +109,14 @@ async def test_consent_isolated_between_tenants(sessionmaker_):
         await _set_tenant(s, "t_a")
         await s.execute(text(
             "INSERT INTO patient_consent (tenant_id, patient_id, purpose) "
-            "VALUES ('t_a', :pid, 'share:abdm')"
+            "VALUES ('t_a', CAST(:pid AS uuid), 'share:abdm')"
         ).bindparams(pid=pid_a))
         await s.commit()
     async with sessionmaker_() as s:
         await _set_tenant(s, "t_b")
         await s.execute(text(
             "INSERT INTO patient_consent (tenant_id, patient_id, purpose) "
-            "VALUES ('t_b', :pid, 'share:abdm')"
+            "VALUES ('t_b', CAST(:pid AS uuid), 'share:abdm')"
         ).bindparams(pid=pid_b))
         await s.commit()
 
@@ -233,31 +233,31 @@ async def _provision_all_parents(s, tid: str) -> dict[str, str]:
     ).bindparams(room_id=ids["room_id"], site_id=ids["site_id"], tid=tid))
 
     await s.execute(text(
-        "INSERT INTO patient (id, tenant_id, given_name, family_name) VALUES (:patient_id, :tid, 'Given', 'Family') "
+        "INSERT INTO patient (id, tenant_id, given_name, family_name) VALUES (CAST(:patient_id AS uuid), :tid, 'Given', 'Family') "
         "ON CONFLICT (id) DO NOTHING"
     ).bindparams(patient_id=ids["patient_id"], tid=tid))
 
     await s.execute(text(
         "INSERT INTO appointment (id, tenant_id, patient_id, practitioner_id, site_id, room_id, service_id, status, start_time, end_time) "
-        "VALUES (:app_id, :tid, :patient_id, :doc_id, :site_id, :room_id, :svc_id, 'BOOKED', now(), now() + interval '30 minutes') "
+        "VALUES (:app_id, :tid, CAST(:patient_id AS uuid), :doc_id, :site_id, :room_id, :svc_id, 'BOOKED', now(), now() + interval '30 minutes') "
         "ON CONFLICT (id) DO NOTHING"
     ).bindparams(app_id=ids["app_id"], tid=tid, patient_id=ids["patient_id"], doc_id=ids["doc_id"], site_id=ids["site_id"], room_id=ids["room_id"], svc_id=ids["svc_id"]))
 
     await s.execute(text(
         "INSERT INTO encounter (id, tenant_id, appointment_id, patient_id, practitioner_id, site_id, status) "
-        "VALUES (:enc_id, :tid, :app_id, :patient_id, :doc_id, :site_id, 'open') "
+        "VALUES (:enc_id, :tid, :app_id, CAST(:patient_id AS uuid), :doc_id, :site_id, 'open') "
         "ON CONFLICT (id) DO NOTHING"
     ).bindparams(enc_id=ids["enc_id"], tid=tid, app_id=ids["app_id"], patient_id=ids["patient_id"], doc_id=ids["doc_id"], site_id=ids["site_id"]))
 
     await s.execute(text(
         "INSERT INTO patient_coverage (id, tenant_id, patient_id, scheme_type, plan_name, member_id, validity_start, validity_end, patient_share_percent) "
-        "VALUES (:cov_id, :tid, :patient_id, 'private', 'Plan', 'MEM', '2026-01-01', '2030-01-01', 20) "
+        "VALUES (:cov_id, :tid, CAST(:patient_id AS uuid), 'private', 'Plan', 'MEM', '2026-01-01', '2030-01-01', 20) "
         "ON CONFLICT (id) DO NOTHING"
     ).bindparams(cov_id=ids["cov_id"], tid=tid, patient_id=ids["patient_id"]))
 
     await s.execute(text(
         "INSERT INTO invoice (id, tenant_id, patient_id, encounter_id, status, coverage_id) "
-        "VALUES (:inv_id, :tid, :patient_id, :enc_id, 'draft', :cov_id) "
+        "VALUES (:inv_id, :tid, CAST(:patient_id AS uuid), :enc_id, 'draft', :cov_id) "
         "ON CONFLICT (id) DO NOTHING"
     ).bindparams(inv_id=ids["inv_id"], tid=tid, patient_id=ids["patient_id"], enc_id=ids["enc_id"], cov_id=ids["cov_id"]))
 
@@ -275,13 +275,13 @@ async def _provision_all_parents(s, tid: str) -> dict[str, str]:
 
     await s.execute(text(
         "INSERT INTO lab_order (id, tenant_id, patient_id, practitioner_id, encounter_id, status) "
-        "VALUES (:ord_id, :tid, :patient_id, :doc_id, :enc_id, 'ordered') "
+        "VALUES (:ord_id, :tid, CAST(:patient_id AS uuid), :doc_id, :enc_id, 'ordered') "
         "ON CONFLICT (id) DO NOTHING"
     ).bindparams(ord_id=ids["ord_id"], tid=tid, patient_id=ids["patient_id"], doc_id=ids["doc_id"], enc_id=ids["enc_id"]))
 
     await s.execute(text(
         "INSERT INTO prescription (id, tenant_id, patient_id, practitioner_id, encounter_id, status) "
-        "VALUES (:rx_id, :tid, :patient_id, :doc_id, :enc_id, 'draft') "
+        "VALUES (:rx_id, :tid, CAST(:patient_id AS uuid), :doc_id, :enc_id, 'draft') "
         "ON CONFLICT (id) DO NOTHING"
     ).bindparams(rx_id=ids["rx_id"], tid=tid, patient_id=ids["patient_id"], doc_id=ids["doc_id"], enc_id=ids["enc_id"]))
 
@@ -683,11 +683,11 @@ async def test_all_module_tables_tenant_isolation(sessionmaker_):
         {
             "table": "integration_log",
             "cols": "tenant_id, direction, message_type, status, payload",
-            "select_col": "payload",
-            "check_val_a": "payload_a",
-            "check_val_b": "payload_b",
-            "params_a": {"direction": "inbound", "message_type": "CSV", "status": "success", "payload": "payload_a"},
-            "params_b": {"direction": "inbound", "message_type": "CSV", "status": "success", "payload": "payload_b"}
+            "select_col": "status",
+            "check_val_a": "status_a",
+            "check_val_b": "status_b",
+            "params_a": {"direction": "inbound", "message_type": "CSV", "status": "status_a", "payload": {"data": "a"}},
+            "params_b": {"direction": "inbound", "message_type": "CSV", "status": "status_b", "payload": {"data": "b"}}
         }
     ]
 
@@ -699,21 +699,22 @@ async def test_all_module_tables_tenant_isolation(sessionmaker_):
             await _set_tenant(s, "t_a")
             p_a = {"tid": "t_a"}
             p_a.update(item["params_a"])
-            if "json" in tbl or tbl == "lab_unmatched_result":
-                import json
-                for k, v in p_a.items():
-                    if isinstance(v, dict):
-                        p_a[k] = json.dumps(v)
+            import json
+            for k, v in list(p_a.items()):
+                if isinstance(v, dict):
+                    p_a[k] = json.dumps(v)
             
             param_names = [c.strip() for c in cols.split(",")]
             bind_params = {}
             for name in param_names:
                 if name == "tenant_id":
-                    bind_params["tid"] = "t_a"
+                    bind_params["tenant_id"] = "t_a"
                 else:
                     bind_params[name] = p_a.get(name)
 
-            sql = f"INSERT INTO {tbl} ({cols}) VALUES ({', '.join(f':{n}' for n in param_names)})"
+            conflict_clause = " ON CONFLICT (id) DO NOTHING" if "id" in param_names else ""
+            val_exprs = [f"CAST(:{n} AS uuid)" if n in ("patient_id", "proxy_patient_id") else f"CAST(:{n} AS date)" if n in ("validity_start", "validity_end") else f"CAST(:{n} AS jsonb)" if n in ("payload", "questions_json") else f":{n}" for n in param_names]
+            sql = f"INSERT INTO {tbl} ({cols}) VALUES ({', '.join(val_exprs)}){conflict_clause}"
             await s.execute(text(sql).bindparams(**bind_params))
             await s.commit()
 
@@ -721,20 +722,19 @@ async def test_all_module_tables_tenant_isolation(sessionmaker_):
             await _set_tenant(s, "t_b")
             p_b = {"tid": "t_b"}
             p_b.update(item["params_b"])
-            if "json" in tbl or tbl == "lab_unmatched_result":
-                import json
-                for k, v in p_b.items():
-                    if isinstance(v, dict):
-                        p_b[k] = json.dumps(v)
+            import json
+            for k, v in list(p_b.items()):
+                if isinstance(v, dict):
+                    p_b[k] = json.dumps(v)
 
             bind_params = {}
             for name in param_names:
                 if name == "tenant_id":
-                    bind_params["tid"] = "t_b"
+                    bind_params["tenant_id"] = "t_b"
                 else:
                     bind_params[name] = p_b.get(name)
 
-            sql = f"INSERT INTO {tbl} ({cols}) VALUES ({', '.join(f':{n}' for n in param_names)})"
+            sql = f"INSERT INTO {tbl} ({cols}) VALUES ({', '.join(val_exprs)}){conflict_clause}"
             await s.execute(text(sql).bindparams(**bind_params))
             await s.commit()
 
@@ -783,12 +783,64 @@ async def test_all_module_tables_tenant_isolation(sessionmaker_):
             bind_params = {}
             for name in param_names:
                 if name == "tenant_id":
-                    bind_params["tid"] = "t_b"
+                    bind_params["tenant_id"] = "t_b"
                 else:
                     bind_params[name] = p_a.get(name)
 
-            sql = f"INSERT INTO {tbl} ({cols}) VALUES ({', '.join(f':{n}' for n in param_names)})"
+            sql = f"INSERT INTO {tbl} ({cols}) VALUES ({', '.join(val_exprs)}){conflict_clause}"
             with pytest.raises(DBAPIError):
                 await s.execute(text(sql).bindparams(**bind_params))
                 await s.commit()
+
+
+@pytest.mark.asyncio
+async def test_operator_target_tenant_context_isolation():
+    """PLT-002 / TEN-104: Operator/Admin whose context is tenant A provisions and configures tenant B.
+    Asserts:
+    1. The target tenant B configuration and audit events land strictly under tenant B context.
+    2. Tenant A session can NEVER see tenant B's audit events or site/room/service configurations.
+    """
+    from hms_tenancy import RequestContext, tenant_session
+    from hms_audit import record as audit_record
+
+    ctx_operator = RequestContext(tenant_id="t_a", user_id="operator@t_a", role="operator")
+    target_tenant_b = "t_b"
+
+    engine = create_async_engine(DATABASE_URL)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    try:
+        # Operator in context t_a performs setup wizard write for target tenant t_b
+        async with session_factory() as session:
+            async with tenant_session(session, ctx_operator, tenant_id=target_tenant_b) as s:
+                await s.execute(
+                    text("INSERT INTO site (id, tenant_id, name) VALUES ('site_tb_reg', 't_b', 'Tenant B Site') ON CONFLICT (id) DO NOTHING")
+                )
+                await audit_record(
+                    session=s,
+                    ctx=ctx_operator,
+                    action="create",
+                    resource_type="tenant_wizard",
+                    context_note="Configured setup wizard for tenant t_b",
+                )
+
+        # 1. Verify tenant B session can see its site and audit event
+        async with session_factory() as s:
+            await _set_tenant(s, "t_b")
+            site_rows = (await s.execute(text("SELECT name FROM site WHERE id = 'site_tb_reg'"))).scalars().all()
+            assert "Tenant B Site" in site_rows
+
+            audit_rows = (await s.execute(text("SELECT context_note FROM audit_event WHERE resource_type = 'tenant_wizard'"))).scalars().all()
+            assert any("tenant t_b" in note for note in audit_rows)
+
+        # 2. Verify tenant A session CANNOT see tenant B's site or audit event (ISOLATION GATE)
+        async with session_factory() as s:
+            await _set_tenant(s, "t_a")
+            site_rows_a = (await s.execute(text("SELECT name FROM site WHERE id = 'site_tb_reg'"))).scalars().all()
+            assert "Tenant B Site" not in site_rows_a
+
+            audit_rows_a = (await s.execute(text("SELECT context_note FROM audit_event WHERE resource_type = 'tenant_wizard'"))).scalars().all()
+            assert not any("tenant t_b" in note for note in audit_rows_a)
+    finally:
+        await engine.dispose()
 

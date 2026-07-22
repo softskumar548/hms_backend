@@ -14,12 +14,14 @@ from app.main import app
 client = TestClient(app)
 
 
+import uuid
+
 def test_operator_can_provision_and_manage_tenant():
     """Operator role successfully provisions, lists, retrieves, and updates tenant status."""
     headers = {"Authorization": "Bearer dev.apollo.operator"}
 
     # 1. Provision new tenant
-    tenant_id = "test_hospital_n3"
+    tenant_id = f"test_hosp_{uuid.uuid4().hex[:6]}"
     payload = {
         "id": tenant_id,
         "name": "Test Hospital N3",

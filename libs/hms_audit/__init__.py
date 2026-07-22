@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timezone
 from typing import Optional
 
-from hms_tenancy import RequestContext
+from hms_tenancy import RequestContext, current_tenant_id
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,6 +27,7 @@ async def record(
 ) -> None:
     """Write one immutable audit event. Call inside the same transaction as the
     action being audited so the two commit or roll back together."""
+    effective_tid = current_tenant_id.get() or ctx.tenant_id
     await session.execute(
         text(
             """
@@ -40,7 +41,7 @@ async def record(
                  :context_note, :occurred_at)
             """
         ).bindparams(
-            tenant_id=ctx.tenant_id,
+            tenant_id=effective_tid,
             actor_user_id=ctx.user_id,
             actor_role=ctx.role,
             action=action,

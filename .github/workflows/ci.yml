@@ -9,6 +9,23 @@ on:
   pull_request:
 
 jobs:
+  startup-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deps
+        run: pip install -e "services/plt[dev]"
+
+      - name: Startup guard refusal check (NO DB SERVICE)
+        env:
+          PYTHONPATH: libs
+        run: pytest -q tests/test_startup_guard.py
+
   test:
     runs-on: ubuntu-latest
     services:

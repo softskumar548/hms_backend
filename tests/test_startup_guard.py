@@ -27,8 +27,12 @@ async def test_refuses_to_start_without_database(monkeypatch):
     importlib.reload(db)
     from app.db_guard import DatabaseSafetyError, verify_database_safety
 
-    with pytest.raises(DatabaseSafetyError):
-        await verify_database_safety()
+    try:
+        with pytest.raises(DatabaseSafetyError):
+            await verify_database_safety()
+    finally:
+        monkeypatch.undo()
+        importlib.reload(db)
 
 
 @pytest.mark.asyncio

@@ -55,9 +55,11 @@ def test_aarogyasri_cashless_pre_auth_claim():
     assert claim_data["pre_auth_code"].startswith("PA-AP-")
 
 
+import uuid
+
 def test_tenant_suspension_and_emergency_override():
     headers = {"Authorization": "Bearer dev.apollo.operator"}
-    tenant_id = "test_suspension_tenant"
+    tenant_id = f"test_susp_{uuid.uuid4().hex[:6]}"
 
     # 1. Provision target tenant
     provision_payload = {
