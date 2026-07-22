@@ -9,7 +9,7 @@ ENV PYTHONPATH=/code:/libs
 
 COPY services/plt/pyproject.toml /code/pyproject.toml
 RUN pip install --no-cache-dir \
-    fastapi "uvicorn[standard]" "sqlalchemy[asyncio]" asyncpg pydantic alembic \
+    fastapi "uvicorn[standard]" "sqlalchemy[asyncio]" asyncpg psycopg2-binary pydantic alembic \
     pytest pytest-asyncio httpx
 
 COPY libs /libs
