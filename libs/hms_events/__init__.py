@@ -42,6 +42,13 @@ class NoopPublisher:
     """Dev/test default: logs the event and drops it. Never wire this into prod."""
 
     async def publish(self, event: Event) -> None:
+        import os
+        env_mode = os.getenv("ENV", "development").lower()
+        if env_mode in ["production", "staging"]:
+            log.error("FATAL: NoopPublisher attempted in production/staging for topic=%s", event.topic)
+            raise RuntimeError(
+                f"FATAL: NoopPublisher is forbidden in production/staging for topic '{event.topic}'. Configure an OutboxPublisher or message broker."
+            )
         log.info(
             "event(dev,dropped) topic=%s tenant=%s key=%s",
             event.topic, event.tenant_id, event.key,
