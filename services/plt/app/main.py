@@ -6,22 +6,26 @@ the OpenAPI spec (INT-007) at /docs and /openapi.json.
 """
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from .db import verify_postgres_rls_startup
+from .db_guard import verify_database_safety
 from .routers import patients, scheduling, emr, rx, ord, bil, por, rpt, integration, tenants
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await verify_database_safety()
+    yield
+
 
 app = FastAPI(
     title="HMS Platform — PLT service",
     version="0.1.0",
     description="Foundation: multi-tenant, audited. Sprint-Zero skeleton.",
+    lifespan=lifespan,
 )
-
-
-@app.on_event("startup")
-async def startup_event():
-    await verify_postgres_rls_startup()
 
 app.include_router(patients.router)
 app.include_router(scheduling.router)
