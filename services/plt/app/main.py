@@ -6,15 +6,29 @@ the OpenAPI spec (INT-007) at /docs and /openapi.json.
 """
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from .db_guard import verify_database_safety
 from .routers import patients, scheduling, emr, rx, ord, bil, por, rpt, integration
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # PLT-002 fail-loud gate: refuse to serve unless the real database is
+    # reachable with RLS enforced and the app role is non-privileged. This
+    # permanently closes the silent no-isolation degradation (MockAsyncSession).
+    await verify_database_safety()
+    yield
+
 
 app = FastAPI(
     title="HMS Platform — PLT service",
     version="0.1.0",
     description="Foundation: multi-tenant, audited. Sprint-Zero skeleton.",
+    lifespan=lifespan,
 )
 
 app.include_router(patients.router)
