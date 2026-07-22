@@ -9,6 +9,7 @@ from __future__ import annotations
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from .db import verify_postgres_rls_startup
 from .routers import patients, scheduling, emr, rx, ord, bil, por, rpt, integration, tenants
 
 app = FastAPI(
@@ -16,6 +17,11 @@ app = FastAPI(
     version="0.1.0",
     description="Foundation: multi-tenant, audited. Sprint-Zero skeleton.",
 )
+
+
+@app.on_event("startup")
+async def startup_event():
+    await verify_postgres_rls_startup()
 
 app.include_router(patients.router)
 app.include_router(scheduling.router)

@@ -365,15 +365,56 @@ class MockAsyncSession:
         pass
 
 
+async def verify_postgres_rls_startup() -> None:
+    """Startup check: connect to Postgres, verify 'patient' table RLS (relrowsecurity), refuse to serve otherwise."""
+    env_mode = os.getenv("ENV", "development").lower()
+    allow_mock = os.getenv("HMS_ALLOW_MOCK_DB", "false").lower() == "true"
+
+    try:
+        async with SessionLocal() as session:
+            res = (await session.execute(
+                text("SELECT relrowsecurity FROM pg_class WHERE relname = 'patient'")
+            )).scalar()
+
+            if res is not True:
+                raise RuntimeError(
+                    "POSTGRES RLS CHECK FAILED: 'patient' table relrowsecurity is False or missing. Refusing to serve requests without active Row-Level Security."
+                )
+            logger.info("✓ PostgreSQL startup check passed: 'patient' table relrowsecurity is ACTIVE.")
+    except Exception as e:
+        if env_mode == "test" and allow_mock:
+            logger.warning(
+                f"⚠️ CRITICAL SECURITY WARNING: Postgres RLS startup check failed ({e}). Mock DB allowed in ENV=test with HMS_ALLOW_MOCK_DB=true."
+            )
+            return
+        logger.error(
+            f"FATAL: PostgreSQL RLS startup check failed: {e}. Refusing to start service."
+        )
+        raise RuntimeError(
+            f"PostgreSQL RLS startup check failed: {e}. Refusing to start service without verified RLS database."
+        )
+
+
 async def get_session() -> AsyncSession:
-    """FastAPI dependency: yields a session. Falls back to mock if Postgres is down."""
+    """FastAPI dependency: yields a session. Hard-gated mock DB fallback."""
     try:
         async with SessionLocal() as session:
             await session.execute(text("SELECT 1"))
             yield session
     except Exception as e:
-        logger.warning(
-            f"Database connection failed: {e}. Falling back to in-memory Mock DB Session."
-        )
-        yield MockAsyncSession()
+        env_mode = os.getenv("ENV", "development").lower()
+        allow_mock = os.getenv("HMS_ALLOW_MOCK_DB", "false").lower() == "true"
+
+        if env_mode == "test" and allow_mock:
+            logger.warning(
+                "⚠️ CRITICAL SECURITY WARNING: Database connection failed. Running with MockAsyncSession fallback enabled via HMS_ALLOW_MOCK_DB=true in ENV=test!"
+            )
+            yield MockAsyncSession()
+        else:
+            logger.error(
+                f"FATAL: Database connection failed: {e}. Mock DB fallback is forbidden unless ENV=test and HMS_ALLOW_MOCK_DB=true."
+            )
+            raise RuntimeError(
+                f"Database connection failed: {e}. Live PostgreSQL with Row-Level Security (RLS) is required to serve requests."
+            )
 
