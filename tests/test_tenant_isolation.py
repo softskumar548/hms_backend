@@ -8,8 +8,11 @@ is broken.
 """
 from __future__ import annotations
 
+import json
 import os
-from datetime import datetime
+import uuid
+from datetime import datetime, time
+
 import pytest
 import pytest_asyncio
 from sqlalchemy import text
@@ -53,7 +56,31 @@ async def sessionmaker_():
 
 
 async def _set_tenant(s, tid: str) -> None:
-    await s.execute(text("SET LOCAL app.tenant_id = :t").bindparams(t=tid))
+    # Mirror hms_tenancy.tenant_session: Postgres SET does not accept bind
+    # parameters, so use set_config(..., is_local => true) — the parameterisable,
+    # transaction-scoped equivalent of SET LOCAL.
+    await s.execute(text("SELECT set_config('app.tenant_id', :t, true)").bindparams(t=tid))
+
+
+def _build_insert(tbl: str, cols: str, param_names: list[str], values: dict) -> tuple[str, dict]:
+    """Build an INSERT binding proper types for the strict asyncpg driver.
+
+    dict values are serialised and CAST to JSONB; everything else binds directly
+    (uuid.UUID -> uuid, datetime -> timestamptz, time -> time, int -> numeric).
+    The old mock session ignored types, hiding these mismatches.
+    """
+    placeholders: list[str] = []
+    binds: dict = {}
+    for n in param_names:
+        v = values.get(n)
+        if isinstance(v, dict):
+            binds[n] = json.dumps(v)
+            placeholders.append(f"CAST(:{n} AS JSONB)")
+        else:
+            binds[n] = v
+            placeholders.append(f":{n}")
+    sql = f"INSERT INTO {tbl} ({cols}) VALUES ({', '.join(placeholders)})"
+    return sql, binds
 
 
 @pytest.mark.asyncio
@@ -102,8 +129,8 @@ async def test_no_tenant_context_sees_nothing(sessionmaker_):
 async def test_consent_isolated_between_tenants(sessionmaker_):
     """PLT-010 consent records must be tenant-scoped, same model as patient/audit.
     Added when the patient_consent table shipped."""
-    import uuid
-    pid_a, pid_b = str(uuid.uuid4()), str(uuid.uuid4())
+    # uuid.UUID objects so asyncpg binds them into the uuid patient_id column.
+    pid_a, pid_b = uuid.uuid4(), uuid.uuid4()
 
     async with sessionmaker_() as s:
         await _set_tenant(s, "t_a")
@@ -124,8 +151,8 @@ async def test_consent_isolated_between_tenants(sessionmaker_):
         await _set_tenant(s, "t_a")
         rows = (await s.execute(text("SELECT patient_id FROM patient_consent"))).all()
         seen = {str(r[0]) for r in rows}
-        assert pid_a in seen
-        assert pid_b not in seen, "ISOLATION BREACH: tenant A saw tenant B consent"
+        assert str(pid_a) in seen
+        assert str(pid_b) not in seen, "ISOLATION BREACH: tenant A saw tenant B consent"
 
 
 @pytest.mark.asyncio
@@ -191,22 +218,25 @@ async def test_audit_event_isolated_and_append_only(sessionmaker_):
 
 async def _provision_all_parents(s, tid: str) -> dict[str, str]:
     suffix = "a" if tid == "t_a" else "b"
+    # UUID-typed PK/FK columns must be bound as uuid.UUID objects: the asyncpg
+    # driver is strict and will not implicitly cast a str into a uuid column
+    # (unlike the old mock session). TEXT-keyed tables keep their string ids.
     ids = {
-        "patient_id": f"{suffix}0000000-0000-0000-0000-000000000001",
+        "patient_id": uuid.UUID(f"{suffix}0000000-0000-0000-0000-000000000001"),
         "site_id": f"site_{suffix}",
         "room_id": f"room_{suffix}",
         "svc_id": f"svc_{suffix}",
         "doc_id": f"doc_{suffix}",
-        "app_id": f"{suffix}0000000-0000-0000-0000-000000000002",
-        "enc_id": f"{suffix}0000000-0000-0000-0000-000000000003",
-        "cov_id": f"{suffix}0000000-0000-0000-0000-000000000004",
-        "inv_id": f"{suffix}0000000-0000-0000-0000-000000000005",
+        "app_id": uuid.UUID(f"{suffix}0000000-0000-0000-0000-000000000002"),
+        "enc_id": uuid.UUID(f"{suffix}0000000-0000-0000-0000-000000000003"),
+        "cov_id": uuid.UUID(f"{suffix}0000000-0000-0000-0000-000000000004"),
+        "inv_id": uuid.UUID(f"{suffix}0000000-0000-0000-0000-000000000005"),
         "med_id": f"med_{suffix}",
         "lab_id": f"lab_{suffix}",
-        "ord_id": f"{suffix}0000000-0000-0000-0000-000000000006",
-        "rx_id": f"{suffix}0000000-0000-0000-0000-000000000007",
+        "ord_id": uuid.UUID(f"{suffix}0000000-0000-0000-0000-000000000006"),
+        "rx_id": uuid.UUID(f"{suffix}0000000-0000-0000-0000-000000000007"),
         "chg_id": f"chg_{suffix}",
-        "sub_id": f"{suffix}0000000-0000-0000-0000-000000000008",
+        "sub_id": uuid.UUID(f"{suffix}0000000-0000-0000-0000-000000000008"),
         "prereq_id": f"prereq_{suffix}",
     }
 
@@ -326,8 +356,8 @@ async def test_all_module_tables_tenant_isolation(sessionmaker_):
             "select_col": "day_of_week",
             "check_val_a": 1,
             "check_val_b": 2,
-            "params_a": {"practitioner_id": ids_a["doc_id"], "site_id": ids_a["site_id"], "day_of_week": 1, "start_time": "09:00", "end_time": "17:00"},
-            "params_b": {"practitioner_id": ids_b["doc_id"], "site_id": ids_b["site_id"], "day_of_week": 2, "start_time": "09:00", "end_time": "17:00"}
+            "params_a": {"practitioner_id": ids_a["doc_id"], "site_id": ids_a["site_id"], "day_of_week": 1, "start_time": time(9, 0), "end_time": time(17, 0)},
+            "params_b": {"practitioner_id": ids_b["doc_id"], "site_id": ids_b["site_id"], "day_of_week": 2, "start_time": time(9, 0), "end_time": time(17, 0)}
         },
         {
             "table": "appointment_prerequisite",
@@ -562,44 +592,16 @@ async def test_all_module_tables_tenant_isolation(sessionmaker_):
         
         async with sessionmaker_() as s:
             await _set_tenant(s, "t_a")
-            p_a = {"tid": "t_a"}
-            p_a.update(item["params_a"])
-            if "json" in tbl or tbl == "lab_unmatched_result":
-                import json
-                for k, v in p_a.items():
-                    if isinstance(v, dict):
-                        p_a[k] = json.dumps(v)
-            
             param_names = [c.strip() for c in cols.split(",")]
-            bind_params = {}
-            for name in param_names:
-                if name == "tenant_id":
-                    bind_params["tid"] = "t_a"
-                else:
-                    bind_params[name] = p_a.get(name)
-
-            sql = f"INSERT INTO {tbl} ({cols}) VALUES ({', '.join(f':{n}' for n in param_names)})"
+            values_a = {n: ("t_a" if n == "tenant_id" else item["params_a"].get(n)) for n in param_names}
+            sql, bind_params = _build_insert(tbl, cols, param_names, values_a)
             await s.execute(text(sql).bindparams(**bind_params))
             await s.commit()
 
         async with sessionmaker_() as s:
             await _set_tenant(s, "t_b")
-            p_b = {"tid": "t_b"}
-            p_b.update(item["params_b"])
-            if "json" in tbl or tbl == "lab_unmatched_result":
-                import json
-                for k, v in p_b.items():
-                    if isinstance(v, dict):
-                        p_b[k] = json.dumps(v)
-
-            bind_params = {}
-            for name in param_names:
-                if name == "tenant_id":
-                    bind_params["tid"] = "t_b"
-                else:
-                    bind_params[name] = p_b.get(name)
-
-            sql = f"INSERT INTO {tbl} ({cols}) VALUES ({', '.join(f':{n}' for n in param_names)})"
+            values_b = {n: ("t_b" if n == "tenant_id" else item["params_b"].get(n)) for n in param_names}
+            sql, bind_params = _build_insert(tbl, cols, param_names, values_b)
             await s.execute(text(sql).bindparams(**bind_params))
             await s.commit()
 
@@ -645,14 +647,10 @@ async def test_all_module_tables_tenant_isolation(sessionmaker_):
 
         async with sessionmaker_() as s:
             await _set_tenant(s, "t_a")
-            bind_params = {}
-            for name in param_names:
-                if name == "tenant_id":
-                    bind_params["tid"] = "t_b"
-                else:
-                    bind_params[name] = p_a.get(name)
-
-            sql = f"INSERT INTO {tbl} ({cols}) VALUES ({', '.join(f':{n}' for n in param_names)})"
+            # Tag the row for t_b while the session is bound to t_a: the RLS
+            # WITH CHECK must reject it.
+            values_denied = {n: ("t_b" if n == "tenant_id" else item["params_a"].get(n)) for n in param_names}
+            sql, bind_params = _build_insert(tbl, cols, param_names, values_denied)
             with pytest.raises(DBAPIError):
                 await s.execute(text(sql).bindparams(**bind_params))
                 await s.commit()

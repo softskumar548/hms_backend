@@ -49,9 +49,13 @@ async def tenant_session(
     
     # Track the active tenant ID in the contextvar for event publishing safety
     token = current_tenant_id.set(ctx.tenant_id)
-    # SET LOCAL is transaction-scoped; parameter bound safely to avoid injection.
+    # Use set_config(..., is_local => true) rather than `SET LOCAL app.tenant_id = :tid`:
+    # Postgres SET does not accept bind parameters, so the parameterised form raises a
+    # syntax error against a real database. set_config is the parameterisable, transaction
+    # -scoped equivalent — it binds the value safely (no SQL injection) and, like SET LOCAL,
+    # is rolled back at end of transaction so it cannot leak across pooled connections.
     await session.execute(
-        text("SET LOCAL app.tenant_id = :tid").bindparams(tid=ctx.tenant_id)
+        text("SELECT set_config('app.tenant_id', :tid, true)").bindparams(tid=ctx.tenant_id)
     )
     try:
         yield session
