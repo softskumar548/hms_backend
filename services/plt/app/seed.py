@@ -190,6 +190,25 @@ async def _seed_tenant(tid: str) -> None:
                         i=f"{cid}_{tid}", t=tid, c=code, n=name, cat=cat, p=price)
 
         # --- Patients -------------------------------------------------------
+        # Deterministic e2e anchor (rx-followup flagship): a patient findable by a
+        # "Penicillin" name search who carries a high-severity penicillin allergy,
+        # so the amoxicillin cross-reactivity alert fires reproducibly.
+        anchor_pid = _uid(tid, "patient", "anchor-penicillin")
+        await _exec(
+            s,
+            "INSERT INTO patient (id, tenant_id, given_name, family_name, dob, phone, gender, "
+            "email, preferred_language, created_by) "
+            "VALUES (CAST(:id AS uuid), :t, 'Penicillin', 'Anchor', '1980-01-01', :ph, 'female', "
+            ":em, 'en', 'seed') ON CONFLICT (id) DO NOTHING",
+            id=anchor_pid, t=tid, ph="+91-9000000001", em="penicillin.anchor@example.invalid")
+        await _exec(
+            s,
+            "INSERT INTO allergy_intolerance (id, tenant_id, patient_id, substance_code, "
+            "substance_display, severity, asserted_at, asserted_by) "
+            "VALUES (:id, :t, CAST(:p AS uuid), '91936005', 'Penicillin', 'high', now(), :doc) "
+            "ON CONFLICT (id) DO NOTHING",
+            id=_uid(tid, "allergy", "anchor-penicillin"), t=tid, p=anchor_pid, doc=docs[0])
+
         for i in range(50):
             pid = _uid(tid, "patient", i)
             given = GIVEN[i % len(GIVEN)]
