@@ -36,7 +36,7 @@ class RequestContext:
 
 @asynccontextmanager
 async def tenant_session(
-    session: AsyncSession, ctx: RequestContext
+    session: AsyncSession, ctx: RequestContext, tenant_id: str | None = None
 ) -> AsyncIterator[AsyncSession]:
     """Bind a DB session to a tenant for the duration of a request.
 
@@ -44,20 +44,21 @@ async def tenant_session(
     query. Uses SET LOCAL so the binding is transaction-scoped and cannot leak to
     another request on a pooled connection.
     """
-    if not ctx.tenant_id:
-        raise ValueError("RequestContext.tenant_id is required for a tenant session")
+    effective_tenant_id = tenant_id or ctx.tenant_id
+    if not effective_tenant_id:
+        raise ValueError("RequestContext.tenant_id or tenant_id is required for a tenant session")
     
-    # Track the active tenant ID in the contextvar for event publishing safety
-    token = current_tenant_id.set(ctx.tenant_id)
-    # Use set_config(..., is_local => true) rather than `SET LOCAL app.tenant_id = :tid`:
-    # Postgres SET does not accept bind parameters, so the parameterised form raises a
-    # syntax error against a real database. set_config is the parameterisable, transaction
-    # -scoped equivalent — it binds the value safely (no SQL injection) and, like SET LOCAL,
-    # is rolled back at end of transaction so it cannot leak across pooled connections.
+    token = current_tenant_id.set(effective_tenant_id)
     await session.execute(
-        text("SELECT set_config('app.tenant_id', :tid, true)").bindparams(tid=ctx.tenant_id)
+        text("SELECT set_config('app.tenant_id', :tid, true)").bindparams(tid=effective_tenant_id)
     )
     try:
         yield session
+        if session.in_transaction():
+            await session.commit()
+    except Exception:
+        if session.in_transaction():
+            await session.rollback()
+        raise
     finally:
         current_tenant_id.reset(token)

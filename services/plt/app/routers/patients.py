@@ -9,6 +9,7 @@ Enforces:
 """
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -166,21 +167,22 @@ def map_to_fhir_patient(patient_id: str, body: PatientCreate) -> dict[str, Any]:
             "preferred": True
         })
 
-    if body.address:
-        line_items = [body.address.get("line1", "")]
-        if body.address.get("line2"):
-            line_items.append(body.address.get("line2"))
-        fhir_dict["address"].append({
-            "use": "home",
-            "type": "postal",
-            "line": line_items,
-            "city": body.address.get("city"),
-            "state": body.address.get("state"),
-            "postalCode": body.address.get("postal_code"),
-            "country": body.address.get("country", "IN")
-        })
+    if body.address and (body.address.get("line1") or body.address.get("city") or body.address.get("postal_code")):
+        line_items = [item for item in [body.address.get("line1"), body.address.get("line2")] if item]
+        addr_obj: dict[str, Any] = {"use": "home", "type": "postal"}
+        if line_items:
+            addr_obj["line"] = line_items
+        if body.address.get("city"):
+            addr_obj["city"] = body.address.get("city")
+        if body.address.get("state"):
+            addr_obj["state"] = body.address.get("state")
+        if body.address.get("postal_code"):
+            addr_obj["postalCode"] = body.address.get("postal_code")
+        if body.address.get("country"):
+            addr_obj["country"] = body.address.get("country")
+        fhir_dict["address"].append(addr_obj)
 
-    if body.next_of_kin:
+    if body.next_of_kin and body.next_of_kin.get("name"):
         fhir_dict["contact"].append({
             "relationship": [
                 {
@@ -190,7 +192,7 @@ def map_to_fhir_patient(patient_id: str, body: PatientCreate) -> dict[str, Any]:
                             "code": "N"
                         }
                     ],
-                    "text": body.next_of_kin.get("relationship", "Next of Kin")
+                    "text": body.next_of_kin.get("relationship") or "Next of Kin"
                 }
             ],
             "name": {
@@ -301,9 +303,9 @@ async def create_patient(
                     "abha_number, abha_address, aarogyasri_id, pmjay_id, aadhaar_last_four, "
                     "referred_by_type, referred_by_name, referred_by_id, gender, email, "
                     "preferred_language, address, next_of_kin, fhir_resource, created_by) "
-                    "VALUES (:id, :t, :g, :f, :d, :n, :p, :abha_num, :abha_addr, :aarogyasri, "
+                    "VALUES (CAST(:id AS uuid), :t, :g, :f, CAST(:d AS date), :n, :p, :abha_num, :abha_addr, :aarogyasri, "
                     ":pmjay, :aadhaar, :ref_type, :ref_name, :ref_id, :gender, :email, "
-                    ":language, :address, :next_of_kin, :fhir_resource, :cb) "
+                    ":language, CAST(:address AS jsonb), CAST(:next_of_kin AS jsonb), CAST(:fhir_resource AS jsonb), :cb) "
                     "RETURNING id, given_name, family_name, dob, national_id, phone, "
                     "abha_number, abha_address, aarogyasri_id, pmjay_id, aadhaar_last_four, "
                     "referred_by_type, referred_by_name, referred_by_id, gender, email, "
@@ -315,8 +317,9 @@ async def create_patient(
                     aadhaar=body.aadhaar_last_four, ref_type=body.referred_by_type,
                     ref_name=body.referred_by_name, ref_id=body.referred_by_id, gender=body.gender,
                     email=body.email, language=body.preferred_language,
-                    address=body.address, next_of_kin=body.next_of_kin,
-                    fhir_resource=fhir_resource, cb=ctx.user_id,
+                    address=json.dumps(body.address.model_dump() if hasattr(body.address, "model_dump") else body.address) if body.address else "{}",
+                    next_of_kin=json.dumps(body.next_of_kin.model_dump() if hasattr(body.next_of_kin, "model_dump") else body.next_of_kin) if body.next_of_kin else "{}",
+                    fhir_resource=json.dumps(fhir_resource, default=str), cb=ctx.user_id,
                 )
             )
         ).mappings().one()
@@ -355,7 +358,7 @@ async def get_patient(
                     "abha_number, abha_address, aarogyasri_id, pmjay_id, aadhaar_last_four, "
                     "referred_by_type, referred_by_name, referred_by_id, gender, email, "
                     "preferred_language, address, next_of_kin, fhir_resource "
-                    "FROM patient WHERE id = :pid"
+                    "FROM patient WHERE id = CAST(:pid AS uuid)"
                 ).bindparams(pid=patient_id)
             )
         ).mappings().one_or_none()
@@ -384,7 +387,7 @@ async def update_patient(
     async with tenant_session(session, ctx) as s:
         # Check if record exists
         existing = (
-            await s.execute(text("SELECT id FROM patient WHERE id = :pid").bindparams(pid=patient_id))
+            await s.execute(text("SELECT id FROM patient WHERE id = CAST(:pid AS uuid)").bindparams(pid=patient_id))
         ).mappings().one_or_none()
         if not existing:
             raise HTTPException(status_code=404, detail="patient not found")
@@ -403,7 +406,7 @@ async def update_patient(
                     "referred_by_name = :ref_name, referred_by_id = :ref_id, gender = :gender, "
                     "email = :email, preferred_language = :language, address = :address, "
                     "next_of_kin = :next_of_kin, fhir_resource = :fhir_resource, updated_at = now() "
-                    "WHERE id = :pid "
+                    "WHERE id = CAST(:pid AS uuid) "
                     "RETURNING id, given_name, family_name, dob, national_id, phone, "
                     "abha_number, abha_address, aarogyasri_id, pmjay_id, aadhaar_last_four, "
                     "referred_by_type, referred_by_name, referred_by_id, gender, email, "

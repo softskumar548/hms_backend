@@ -8,11 +8,8 @@ is broken.
 """
 from __future__ import annotations
 
-import json
 import os
-import uuid
-from datetime import datetime, time
-
+from datetime import datetime
 import pytest
 import pytest_asyncio
 from sqlalchemy import text
@@ -56,31 +53,7 @@ async def sessionmaker_():
 
 
 async def _set_tenant(s, tid: str) -> None:
-    # Mirror hms_tenancy.tenant_session: Postgres SET does not accept bind
-    # parameters, so use set_config(..., is_local => true) — the parameterisable,
-    # transaction-scoped equivalent of SET LOCAL.
     await s.execute(text("SELECT set_config('app.tenant_id', :t, true)").bindparams(t=tid))
-
-
-def _build_insert(tbl: str, cols: str, param_names: list[str], values: dict) -> tuple[str, dict]:
-    """Build an INSERT binding proper types for the strict asyncpg driver.
-
-    dict values are serialised and CAST to JSONB; everything else binds directly
-    (uuid.UUID -> uuid, datetime -> timestamptz, time -> time, int -> numeric).
-    The old mock session ignored types, hiding these mismatches.
-    """
-    placeholders: list[str] = []
-    binds: dict = {}
-    for n in param_names:
-        v = values.get(n)
-        if isinstance(v, dict):
-            binds[n] = json.dumps(v)
-            placeholders.append(f"CAST(:{n} AS JSONB)")
-        else:
-            binds[n] = v
-            placeholders.append(f":{n}")
-    sql = f"INSERT INTO {tbl} ({cols}) VALUES ({', '.join(placeholders)})"
-    return sql, binds
 
 
 @pytest.mark.asyncio
@@ -129,21 +102,21 @@ async def test_no_tenant_context_sees_nothing(sessionmaker_):
 async def test_consent_isolated_between_tenants(sessionmaker_):
     """PLT-010 consent records must be tenant-scoped, same model as patient/audit.
     Added when the patient_consent table shipped."""
-    # uuid.UUID objects so asyncpg binds them into the uuid patient_id column.
-    pid_a, pid_b = uuid.uuid4(), uuid.uuid4()
+    import uuid
+    pid_a, pid_b = str(uuid.uuid4()), str(uuid.uuid4())
 
     async with sessionmaker_() as s:
         await _set_tenant(s, "t_a")
         await s.execute(text(
             "INSERT INTO patient_consent (tenant_id, patient_id, purpose) "
-            "VALUES ('t_a', :pid, 'share:abdm')"
+            "VALUES ('t_a', CAST(:pid AS uuid), 'share:abdm')"
         ).bindparams(pid=pid_a))
         await s.commit()
     async with sessionmaker_() as s:
         await _set_tenant(s, "t_b")
         await s.execute(text(
             "INSERT INTO patient_consent (tenant_id, patient_id, purpose) "
-            "VALUES ('t_b', :pid, 'share:abdm')"
+            "VALUES ('t_b', CAST(:pid AS uuid), 'share:abdm')"
         ).bindparams(pid=pid_b))
         await s.commit()
 
@@ -151,8 +124,8 @@ async def test_consent_isolated_between_tenants(sessionmaker_):
         await _set_tenant(s, "t_a")
         rows = (await s.execute(text("SELECT patient_id FROM patient_consent"))).all()
         seen = {str(r[0]) for r in rows}
-        assert str(pid_a) in seen
-        assert str(pid_b) not in seen, "ISOLATION BREACH: tenant A saw tenant B consent"
+        assert pid_a in seen
+        assert pid_b not in seen, "ISOLATION BREACH: tenant A saw tenant B consent"
 
 
 @pytest.mark.asyncio
@@ -218,25 +191,22 @@ async def test_audit_event_isolated_and_append_only(sessionmaker_):
 
 async def _provision_all_parents(s, tid: str) -> dict[str, str]:
     suffix = "a" if tid == "t_a" else "b"
-    # UUID-typed PK/FK columns must be bound as uuid.UUID objects: the asyncpg
-    # driver is strict and will not implicitly cast a str into a uuid column
-    # (unlike the old mock session). TEXT-keyed tables keep their string ids.
     ids = {
-        "patient_id": uuid.UUID(f"{suffix}0000000-0000-0000-0000-000000000001"),
+        "patient_id": f"{suffix}0000000-0000-0000-0000-000000000001",
         "site_id": f"site_{suffix}",
         "room_id": f"room_{suffix}",
         "svc_id": f"svc_{suffix}",
         "doc_id": f"doc_{suffix}",
-        "app_id": uuid.UUID(f"{suffix}0000000-0000-0000-0000-000000000002"),
-        "enc_id": uuid.UUID(f"{suffix}0000000-0000-0000-0000-000000000003"),
-        "cov_id": uuid.UUID(f"{suffix}0000000-0000-0000-0000-000000000004"),
-        "inv_id": uuid.UUID(f"{suffix}0000000-0000-0000-0000-000000000005"),
+        "app_id": f"{suffix}0000000-0000-0000-0000-000000000002",
+        "enc_id": f"{suffix}0000000-0000-0000-0000-000000000003",
+        "cov_id": f"{suffix}0000000-0000-0000-0000-000000000004",
+        "inv_id": f"{suffix}0000000-0000-0000-0000-000000000005",
         "med_id": f"med_{suffix}",
         "lab_id": f"lab_{suffix}",
-        "ord_id": uuid.UUID(f"{suffix}0000000-0000-0000-0000-000000000006"),
-        "rx_id": uuid.UUID(f"{suffix}0000000-0000-0000-0000-000000000007"),
+        "ord_id": f"{suffix}0000000-0000-0000-0000-000000000006",
+        "rx_id": f"{suffix}0000000-0000-0000-0000-000000000007",
         "chg_id": f"chg_{suffix}",
-        "sub_id": uuid.UUID(f"{suffix}0000000-0000-0000-0000-000000000008"),
+        "sub_id": f"{suffix}0000000-0000-0000-0000-000000000008",
         "prereq_id": f"prereq_{suffix}",
     }
 
@@ -263,31 +233,31 @@ async def _provision_all_parents(s, tid: str) -> dict[str, str]:
     ).bindparams(room_id=ids["room_id"], site_id=ids["site_id"], tid=tid))
 
     await s.execute(text(
-        "INSERT INTO patient (id, tenant_id, given_name, family_name) VALUES (:patient_id, :tid, 'Given', 'Family') "
+        "INSERT INTO patient (id, tenant_id, given_name, family_name) VALUES (CAST(:patient_id AS uuid), :tid, 'Given', 'Family') "
         "ON CONFLICT (id) DO NOTHING"
     ).bindparams(patient_id=ids["patient_id"], tid=tid))
 
     await s.execute(text(
         "INSERT INTO appointment (id, tenant_id, patient_id, practitioner_id, site_id, room_id, service_id, status, start_time, end_time) "
-        "VALUES (:app_id, :tid, :patient_id, :doc_id, :site_id, :room_id, :svc_id, 'BOOKED', now(), now() + interval '30 minutes') "
+        "VALUES (:app_id, :tid, CAST(:patient_id AS uuid), :doc_id, :site_id, :room_id, :svc_id, 'BOOKED', now(), now() + interval '30 minutes') "
         "ON CONFLICT (id) DO NOTHING"
     ).bindparams(app_id=ids["app_id"], tid=tid, patient_id=ids["patient_id"], doc_id=ids["doc_id"], site_id=ids["site_id"], room_id=ids["room_id"], svc_id=ids["svc_id"]))
 
     await s.execute(text(
         "INSERT INTO encounter (id, tenant_id, appointment_id, patient_id, practitioner_id, site_id, status) "
-        "VALUES (:enc_id, :tid, :app_id, :patient_id, :doc_id, :site_id, 'open') "
+        "VALUES (:enc_id, :tid, :app_id, CAST(:patient_id AS uuid), :doc_id, :site_id, 'open') "
         "ON CONFLICT (id) DO NOTHING"
     ).bindparams(enc_id=ids["enc_id"], tid=tid, app_id=ids["app_id"], patient_id=ids["patient_id"], doc_id=ids["doc_id"], site_id=ids["site_id"]))
 
     await s.execute(text(
         "INSERT INTO patient_coverage (id, tenant_id, patient_id, scheme_type, plan_name, member_id, validity_start, validity_end, patient_share_percent) "
-        "VALUES (:cov_id, :tid, :patient_id, 'private', 'Plan', 'MEM', '2026-01-01', '2030-01-01', 20) "
+        "VALUES (:cov_id, :tid, CAST(:patient_id AS uuid), 'private', 'Plan', 'MEM', '2026-01-01', '2030-01-01', 20) "
         "ON CONFLICT (id) DO NOTHING"
     ).bindparams(cov_id=ids["cov_id"], tid=tid, patient_id=ids["patient_id"]))
 
     await s.execute(text(
         "INSERT INTO invoice (id, tenant_id, patient_id, encounter_id, status, coverage_id) "
-        "VALUES (:inv_id, :tid, :patient_id, :enc_id, 'draft', :cov_id) "
+        "VALUES (:inv_id, :tid, CAST(:patient_id AS uuid), :enc_id, 'draft', :cov_id) "
         "ON CONFLICT (id) DO NOTHING"
     ).bindparams(inv_id=ids["inv_id"], tid=tid, patient_id=ids["patient_id"], enc_id=ids["enc_id"], cov_id=ids["cov_id"]))
 
@@ -305,13 +275,13 @@ async def _provision_all_parents(s, tid: str) -> dict[str, str]:
 
     await s.execute(text(
         "INSERT INTO lab_order (id, tenant_id, patient_id, practitioner_id, encounter_id, status) "
-        "VALUES (:ord_id, :tid, :patient_id, :doc_id, :enc_id, 'ordered') "
+        "VALUES (:ord_id, :tid, CAST(:patient_id AS uuid), :doc_id, :enc_id, 'ordered') "
         "ON CONFLICT (id) DO NOTHING"
     ).bindparams(ord_id=ids["ord_id"], tid=tid, patient_id=ids["patient_id"], doc_id=ids["doc_id"], enc_id=ids["enc_id"]))
 
     await s.execute(text(
         "INSERT INTO prescription (id, tenant_id, patient_id, practitioner_id, encounter_id, status) "
-        "VALUES (:rx_id, :tid, :patient_id, :doc_id, :enc_id, 'draft') "
+        "VALUES (:rx_id, :tid, CAST(:patient_id AS uuid), :doc_id, :enc_id, 'draft') "
         "ON CONFLICT (id) DO NOTHING"
     ).bindparams(rx_id=ids["rx_id"], tid=tid, patient_id=ids["patient_id"], doc_id=ids["doc_id"], enc_id=ids["enc_id"]))
 
@@ -351,13 +321,148 @@ async def test_all_module_tables_tenant_isolation(sessionmaker_):
     # 2. Define child tables list with all columns, values, check parameters
     child_tables = [
         {
+            "table": "site",
+            "cols": "id, tenant_id, name",
+            "select_col": "name",
+            "check_val_a": "Site A Test",
+            "check_val_b": "Site B Test",
+            "params_a": {"id": "site_test_a", "name": "Site A Test"},
+            "params_b": {"id": "site_test_b", "name": "Site B Test"}
+        },
+        {
+            "table": "practitioner",
+            "cols": "id, tenant_id, name",
+            "select_col": "name",
+            "check_val_a": "Doc A Test",
+            "check_val_b": "Doc B Test",
+            "params_a": {"id": "doc_test_a", "name": "Doc A Test"},
+            "params_b": {"id": "doc_test_b", "name": "Doc B Test"}
+        },
+        {
+            "table": "service",
+            "cols": "id, tenant_id, name, duration_minutes",
+            "select_col": "name",
+            "check_val_a": "Svc A Test",
+            "check_val_b": "Svc B Test",
+            "params_a": {"id": "svc_test_a", "name": "Svc A Test", "duration_minutes": 15},
+            "params_b": {"id": "svc_test_b", "name": "Svc B Test", "duration_minutes": 30}
+        },
+        {
+            "table": "room",
+            "cols": "id, site_id, tenant_id, name",
+            "select_col": "name",
+            "check_val_a": "Room A Test",
+            "check_val_b": "Room B Test",
+            "params_a": {"id": "room_test_a", "site_id": ids_a["site_id"], "name": "Room A Test"},
+            "params_b": {"id": "room_test_b", "site_id": ids_b["site_id"], "name": "Room B Test"}
+        },
+        {
+            "table": "appointment",
+            "cols": "id, tenant_id, patient_id, practitioner_id, site_id, room_id, service_id, status, start_time, end_time",
+            "select_col": "status",
+            "check_val_a": "ARRIVED_A",
+            "check_val_b": "ARRIVED_B",
+            "params_a": {"id": f"{ids_a['patient_id'][:8]}-0000-0000-0000-000000000099", "patient_id": ids_a["patient_id"], "practitioner_id": ids_a["doc_id"], "site_id": ids_a["site_id"], "room_id": ids_a["room_id"], "service_id": ids_a["svc_id"], "status": "ARRIVED_A", "start_time": datetime.now(), "end_time": datetime.now()},
+            "params_b": {"id": f"{ids_b['patient_id'][:8]}-0000-0000-0000-000000000099", "patient_id": ids_b["patient_id"], "practitioner_id": ids_b["doc_id"], "site_id": ids_b["site_id"], "room_id": ids_b["room_id"], "service_id": ids_b["svc_id"], "status": "ARRIVED_B", "start_time": datetime.now(), "end_time": datetime.now()}
+        },
+        {
+            "table": "encounter",
+            "cols": "id, tenant_id, appointment_id, patient_id, practitioner_id, site_id, status",
+            "select_col": "status",
+            "check_val_a": "open_a",
+            "check_val_b": "open_b",
+            "params_a": {"id": f"{ids_a['patient_id'][:8]}-0000-0000-0000-000000000098", "appointment_id": ids_a["app_id"], "patient_id": ids_a["patient_id"], "practitioner_id": ids_a["doc_id"], "site_id": ids_a["site_id"], "status": "open_a"},
+            "params_b": {"id": f"{ids_b['patient_id'][:8]}-0000-0000-0000-000000000098", "appointment_id": ids_b["app_id"], "patient_id": ids_b["patient_id"], "practitioner_id": ids_b["doc_id"], "site_id": ids_b["site_id"], "status": "open_b"}
+        },
+        {
+            "table": "patient_coverage",
+            "cols": "id, tenant_id, patient_id, scheme_type, plan_name, member_id, validity_start, validity_end, patient_share_percent",
+            "select_col": "plan_name",
+            "check_val_a": "Plan A Test",
+            "check_val_b": "Plan B Test",
+            "params_a": {"id": f"{ids_a['patient_id'][:8]}-0000-0000-0000-000000000097", "patient_id": ids_a["patient_id"], "scheme_type": "private", "plan_name": "Plan A Test", "member_id": "MEMA", "validity_start": "2026-01-01", "validity_end": "2030-01-01", "patient_share_percent": 10},
+            "params_b": {"id": f"{ids_b['patient_id'][:8]}-0000-0000-0000-000000000097", "patient_id": ids_b["patient_id"], "scheme_type": "private", "plan_name": "Plan B Test", "member_id": "MEMB", "validity_start": "2026-01-01", "validity_end": "2030-01-01", "patient_share_percent": 20}
+        },
+        {
+            "table": "invoice",
+            "cols": "id, tenant_id, patient_id, encounter_id, status",
+            "select_col": "status",
+            "check_val_a": "draft_a",
+            "check_val_b": "draft_b",
+            "params_a": {"id": f"{ids_a['patient_id'][:8]}-0000-0000-0000-000000000096", "patient_id": ids_a["patient_id"], "encounter_id": ids_a["enc_id"], "status": "draft_a"},
+            "params_b": {"id": f"{ids_b['patient_id'][:8]}-0000-0000-0000-000000000096", "patient_id": ids_b["patient_id"], "encounter_id": ids_b["enc_id"], "status": "draft_b"}
+        },
+        {
+            "table": "medication_catalog",
+            "cols": "id, tenant_id, name, generic_name, form, strength",
+            "select_col": "name",
+            "check_val_a": "Med A Test",
+            "check_val_b": "Med B Test",
+            "params_a": {"id": "med_t_a", "name": "Med A Test", "generic_name": "Gen A", "form": "tablet", "strength": "10mg"},
+            "params_b": {"id": "med_t_b", "name": "Med B Test", "generic_name": "Gen B", "form": "tablet", "strength": "20mg"}
+        },
+        {
+            "table": "lab_catalog",
+            "cols": "id, tenant_id, test_code, name",
+            "select_col": "name",
+            "check_val_a": "Lab Test A",
+            "check_val_b": "Lab Test B",
+            "params_a": {"id": "lab_t_a", "test_code": "CODE_A", "name": "Lab Test A"},
+            "params_b": {"id": "lab_t_b", "test_code": "CODE_B", "name": "Lab Test B"}
+        },
+        {
+            "table": "lab_order",
+            "cols": "id, tenant_id, patient_id, practitioner_id, encounter_id, status",
+            "select_col": "status",
+            "check_val_a": "ordered_a",
+            "check_val_b": "ordered_b",
+            "params_a": {"id": f"{ids_a['patient_id'][:8]}-0000-0000-0000-000000000095", "patient_id": ids_a["patient_id"], "practitioner_id": ids_a["doc_id"], "encounter_id": ids_a["enc_id"], "status": "ordered_a"},
+            "params_b": {"id": f"{ids_b['patient_id'][:8]}-0000-0000-0000-000000000095", "patient_id": ids_b["patient_id"], "practitioner_id": ids_b["doc_id"], "encounter_id": ids_b["enc_id"], "status": "ordered_b"}
+        },
+        {
+            "table": "prescription",
+            "cols": "id, tenant_id, patient_id, practitioner_id, encounter_id, status",
+            "select_col": "status",
+            "check_val_a": "draft_rx_a",
+            "check_val_b": "draft_rx_b",
+            "params_a": {"id": f"{ids_a['patient_id'][:8]}-0000-0000-0000-000000000094", "patient_id": ids_a["patient_id"], "practitioner_id": ids_a["doc_id"], "encounter_id": ids_a["enc_id"], "status": "draft_rx_a"},
+            "params_b": {"id": f"{ids_b['patient_id'][:8]}-0000-0000-0000-000000000094", "patient_id": ids_b["patient_id"], "practitioner_id": ids_b["doc_id"], "encounter_id": ids_b["enc_id"], "status": "draft_rx_b"}
+        },
+        {
+            "table": "charge_master",
+            "cols": "id, tenant_id, code, name, category, standard_price",
+            "select_col": "name",
+            "check_val_a": "Charge A Test",
+            "check_val_b": "Charge B Test",
+            "params_a": {"id": "chg_t_a", "code": "C_A", "name": "Charge A Test", "category": "consultation", "standard_price": 100},
+            "params_b": {"id": "chg_t_b", "code": "C_B", "name": "Charge B Test", "category": "consultation", "standard_price": 200}
+        },
+        {
+            "table": "webhook_subscription",
+            "cols": "id, tenant_id, event_type, url, secret_key",
+            "select_col": "event_type",
+            "check_val_a": "evt_type_a",
+            "check_val_b": "evt_type_b",
+            "params_a": {"id": f"{ids_a['patient_id'][:8]}-0000-0000-0000-000000000093", "event_type": "evt_type_a", "url": "http://a.com", "secret_key": "sec_a"},
+            "params_b": {"id": f"{ids_b['patient_id'][:8]}-0000-0000-0000-000000000093", "event_type": "evt_type_b", "url": "http://b.com", "secret_key": "sec_b"}
+        },
+        {
+            "table": "prerequisite_definition",
+            "cols": "id, tenant_id, code, description",
+            "select_col": "description",
+            "check_val_a": "Prereq Desc A",
+            "check_val_b": "Prereq Desc B",
+            "params_a": {"id": "prq_t_a", "code": "PRQ_A", "description": "Prereq Desc A"},
+            "params_b": {"id": "prq_t_b", "code": "PRQ_B", "description": "Prereq Desc B"}
+        },
+        {
             "table": "practitioner_availability",
             "cols": "practitioner_id, site_id, tenant_id, day_of_week, start_time, end_time",
             "select_col": "day_of_week",
             "check_val_a": 1,
             "check_val_b": 2,
-            "params_a": {"practitioner_id": ids_a["doc_id"], "site_id": ids_a["site_id"], "day_of_week": 1, "start_time": time(9, 0), "end_time": time(17, 0)},
-            "params_b": {"practitioner_id": ids_b["doc_id"], "site_id": ids_b["site_id"], "day_of_week": 2, "start_time": time(9, 0), "end_time": time(17, 0)}
+            "params_a": {"practitioner_id": ids_a["doc_id"], "site_id": ids_a["site_id"], "day_of_week": 1, "start_time": "09:00", "end_time": "17:00"},
+            "params_b": {"practitioner_id": ids_b["doc_id"], "site_id": ids_b["site_id"], "day_of_week": 2, "start_time": "09:00", "end_time": "17:00"}
         },
         {
             "table": "appointment_prerequisite",
@@ -578,11 +683,11 @@ async def test_all_module_tables_tenant_isolation(sessionmaker_):
         {
             "table": "integration_log",
             "cols": "tenant_id, direction, message_type, status, payload",
-            "select_col": "payload",
-            "check_val_a": "payload_a",
-            "check_val_b": "payload_b",
-            "params_a": {"direction": "inbound", "message_type": "CSV", "status": "success", "payload": "payload_a"},
-            "params_b": {"direction": "inbound", "message_type": "CSV", "status": "success", "payload": "payload_b"}
+            "select_col": "status",
+            "check_val_a": "status_a",
+            "check_val_b": "status_b",
+            "params_a": {"direction": "inbound", "message_type": "CSV", "status": "status_a", "payload": {"data": "a"}},
+            "params_b": {"direction": "inbound", "message_type": "CSV", "status": "status_b", "payload": {"data": "b"}}
         }
     ]
 
@@ -592,16 +697,44 @@ async def test_all_module_tables_tenant_isolation(sessionmaker_):
         
         async with sessionmaker_() as s:
             await _set_tenant(s, "t_a")
+            p_a = {"tid": "t_a"}
+            p_a.update(item["params_a"])
+            import json
+            for k, v in list(p_a.items()):
+                if isinstance(v, dict):
+                    p_a[k] = json.dumps(v)
+            
             param_names = [c.strip() for c in cols.split(",")]
-            values_a = {n: ("t_a" if n == "tenant_id" else item["params_a"].get(n)) for n in param_names}
-            sql, bind_params = _build_insert(tbl, cols, param_names, values_a)
+            bind_params = {}
+            for name in param_names:
+                if name == "tenant_id":
+                    bind_params["tenant_id"] = "t_a"
+                else:
+                    bind_params[name] = p_a.get(name)
+
+            conflict_clause = " ON CONFLICT (id) DO NOTHING" if "id" in param_names else ""
+            val_exprs = [f"CAST(:{n} AS uuid)" if n in ("patient_id", "proxy_patient_id") else f"CAST(:{n} AS date)" if n in ("validity_start", "validity_end") else f"CAST(:{n} AS jsonb)" if n in ("payload", "questions_json") else f":{n}" for n in param_names]
+            sql = f"INSERT INTO {tbl} ({cols}) VALUES ({', '.join(val_exprs)}){conflict_clause}"
             await s.execute(text(sql).bindparams(**bind_params))
             await s.commit()
 
         async with sessionmaker_() as s:
             await _set_tenant(s, "t_b")
-            values_b = {n: ("t_b" if n == "tenant_id" else item["params_b"].get(n)) for n in param_names}
-            sql, bind_params = _build_insert(tbl, cols, param_names, values_b)
+            p_b = {"tid": "t_b"}
+            p_b.update(item["params_b"])
+            import json
+            for k, v in list(p_b.items()):
+                if isinstance(v, dict):
+                    p_b[k] = json.dumps(v)
+
+            bind_params = {}
+            for name in param_names:
+                if name == "tenant_id":
+                    bind_params["tenant_id"] = "t_b"
+                else:
+                    bind_params[name] = p_b.get(name)
+
+            sql = f"INSERT INTO {tbl} ({cols}) VALUES ({', '.join(val_exprs)}){conflict_clause}"
             await s.execute(text(sql).bindparams(**bind_params))
             await s.commit()
 
@@ -647,11 +780,67 @@ async def test_all_module_tables_tenant_isolation(sessionmaker_):
 
         async with sessionmaker_() as s:
             await _set_tenant(s, "t_a")
-            # Tag the row for t_b while the session is bound to t_a: the RLS
-            # WITH CHECK must reject it.
-            values_denied = {n: ("t_b" if n == "tenant_id" else item["params_a"].get(n)) for n in param_names}
-            sql, bind_params = _build_insert(tbl, cols, param_names, values_denied)
+            bind_params = {}
+            for name in param_names:
+                if name == "tenant_id":
+                    bind_params["tenant_id"] = "t_b"
+                else:
+                    bind_params[name] = p_a.get(name)
+
+            sql = f"INSERT INTO {tbl} ({cols}) VALUES ({', '.join(val_exprs)}){conflict_clause}"
             with pytest.raises(DBAPIError):
                 await s.execute(text(sql).bindparams(**bind_params))
                 await s.commit()
+
+
+@pytest.mark.asyncio
+async def test_operator_target_tenant_context_isolation():
+    """PLT-002 / TEN-104: Operator/Admin whose context is tenant A provisions and configures tenant B.
+    Asserts:
+    1. The target tenant B configuration and audit events land strictly under tenant B context.
+    2. Tenant A session can NEVER see tenant B's audit events or site/room/service configurations.
+    """
+    from hms_tenancy import RequestContext, tenant_session
+    from hms_audit import record as audit_record
+
+    ctx_operator = RequestContext(tenant_id="t_a", user_id="operator@t_a", role="operator")
+    target_tenant_b = "t_b"
+
+    engine = create_async_engine(DATABASE_URL)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    try:
+        # Operator in context t_a performs setup wizard write for target tenant t_b
+        async with session_factory() as session:
+            async with tenant_session(session, ctx_operator, tenant_id=target_tenant_b) as s:
+                await s.execute(
+                    text("INSERT INTO site (id, tenant_id, name) VALUES ('site_tb_reg', 't_b', 'Tenant B Site') ON CONFLICT (id) DO NOTHING")
+                )
+                await audit_record(
+                    session=s,
+                    ctx=ctx_operator,
+                    action="create",
+                    resource_type="tenant_wizard",
+                    context_note="Configured setup wizard for tenant t_b",
+                )
+
+        # 1. Verify tenant B session can see its site and audit event
+        async with session_factory() as s:
+            await _set_tenant(s, "t_b")
+            site_rows = (await s.execute(text("SELECT name FROM site WHERE id = 'site_tb_reg'"))).scalars().all()
+            assert "Tenant B Site" in site_rows
+
+            audit_rows = (await s.execute(text("SELECT context_note FROM audit_event WHERE resource_type = 'tenant_wizard'"))).scalars().all()
+            assert any("tenant t_b" in note for note in audit_rows)
+
+        # 2. Verify tenant A session CANNOT see tenant B's site or audit event (ISOLATION GATE)
+        async with session_factory() as s:
+            await _set_tenant(s, "t_a")
+            site_rows_a = (await s.execute(text("SELECT name FROM site WHERE id = 'site_tb_reg'"))).scalars().all()
+            assert "Tenant B Site" not in site_rows_a
+
+            audit_rows_a = (await s.execute(text("SELECT context_note FROM audit_event WHERE resource_type = 'tenant_wizard'"))).scalars().all()
+            assert not any("tenant t_b" in note for note in audit_rows_a)
+    finally:
+        await engine.dispose()
 

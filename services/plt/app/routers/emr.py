@@ -458,7 +458,7 @@ async def get_patient_summary(
             await s.execute(
                 text(
                     "SELECT id, given_name, family_name, dob, phone, gender, email, preferred_language, address "
-                    "FROM patient WHERE id = :id"
+                    "FROM patient WHERE id = CAST(:id AS uuid)"
                 ).bindparams(id=patient_id)
             )
         ).mappings().one_or_none()
@@ -471,7 +471,7 @@ async def get_patient_summary(
             await s.execute(
                 text(
                     "SELECT id, patient_id, substance_code, substance_display, reaction, severity, criticality, is_no_known, asserted_at, asserted_by "
-                    "FROM allergy_intolerance WHERE patient_id = :pid ORDER BY asserted_at DESC"
+                    "FROM allergy_intolerance WHERE patient_id = CAST(:pid AS uuid) ORDER BY asserted_at DESC"
                 ).bindparams(pid=patient_id)
             )
         ).mappings().all()
@@ -481,7 +481,7 @@ async def get_patient_summary(
             await s.execute(
                 text(
                     "SELECT id, patient_id, clinical_status, code, display, onset_date, resolution_date, asserted_at "
-                    "FROM condition WHERE patient_id = :pid ORDER BY asserted_at DESC"
+                    "FROM condition WHERE patient_id = CAST(:pid AS uuid) ORDER BY asserted_at DESC"
                 ).bindparams(pid=patient_id)
             )
         ).mappings().all()
@@ -491,7 +491,7 @@ async def get_patient_summary(
             await s.execute(
                 text(
                     "SELECT id, patient_id, status, medication_code, medication_display, sig, asserted_at "
-                    "FROM medication_statement WHERE patient_id = :pid ORDER BY asserted_at DESC"
+                    "FROM medication_statement WHERE patient_id = CAST(:pid AS uuid) ORDER BY asserted_at DESC"
                 ).bindparams(pid=patient_id)
             )
         ).mappings().all()
@@ -501,7 +501,7 @@ async def get_patient_summary(
             await s.execute(
                 text(
                     "SELECT id, encounter_id, patient_id, type, value, unit, recorded_at "
-                    "FROM vital_sign WHERE patient_id = :pid ORDER BY recorded_at DESC LIMIT 50"
+                    "FROM vital_sign WHERE patient_id = CAST(:pid AS uuid) ORDER BY recorded_at DESC LIMIT 50"
                 ).bindparams(pid=patient_id)
             )
         ).mappings().all()
@@ -511,7 +511,7 @@ async def get_patient_summary(
             await s.execute(
                 text(
                     "SELECT id, appointment_id, patient_id, practitioner_id, site_id, status, created_at, updated_at, signed_at, signed_by "
-                    "FROM encounter WHERE patient_id = :pid ORDER BY created_at DESC"
+                    "FROM encounter WHERE patient_id = CAST(:pid AS uuid) ORDER BY created_at DESC"
                 ).bindparams(pid=patient_id)
             )
         ).mappings().all()

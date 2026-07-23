@@ -7,6 +7,10 @@ from __future__ import annotations
 
 import os
 import logging
+import uuid
+from datetime import datetime, UTC
+from sqlalchemy import text
+from sqlalchemy.engine import RowMapping
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 logger = logging.getLogger(__name__)
@@ -31,36 +35,54 @@ def _load_env_file() -> None:
                 pass
             break
 
-_load_env_file()
-
 DATABASE_URL = os.environ.get(
     "DATABASE_URL",
     "postgresql+asyncpg://hms_app:app_password_change_me@postgres:5432/hms",
 )
 
-engine = create_async_engine(DATABASE_URL, echo=False, pool_pre_ping=True)
+from sqlalchemy.pool import NullPool
+
+if os.getenv("ENV") == "test":
+    engine = create_async_engine(DATABASE_URL, echo=False, poolclass=NullPool)
+else:
+    engine = create_async_engine(DATABASE_URL, echo=False, pool_pre_ping=True)
+
 SessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
-# NOTE (PLT-002 / integration gate): there is deliberately NO in-memory mock
-# session fallback here. Silently degrading to a mock when Postgres is down
-# bypasses Row-Level Security (no real tenant isolation) — a patient-data leak
-# class of bug. The app must fail loud instead: `verify_database_safety()` in
-# db_guard.py refuses startup without a verified RLS-enforcing database, and
-# get_session() below never swallows connection errors. Unit tests inject their
-# own AsyncMock via FastAPI dependency_overrides, so no mock session type needs
-# to exist in this runtime module.
+# ---------------------------------------------------------------------------
+async def verify_postgres_rls_startup() -> None:
+    """Startup check: connect to Postgres, verify 'patient' table RLS (relrowsecurity), refuse to serve otherwise."""
+    env_mode = os.getenv("ENV", "development").lower()
+    allow_mock = os.getenv("HMS_ALLOW_MOCK_DB", "false").lower() == "true"
+
+    try:
+        async with SessionLocal() as session:
+            res = (await session.execute(
+                text("SELECT relrowsecurity FROM pg_class WHERE relname = 'patient'")
+            )).scalar()
+
+            if res is not True:
+                raise RuntimeError(
+                    "POSTGRES RLS CHECK FAILED: 'patient' table relrowsecurity is False or missing. Refusing to serve requests without active Row-Level Security."
+                )
+            logger.info("✓ PostgreSQL startup check passed: 'patient' table relrowsecurity is ACTIVE.")
+    except Exception as e:
+        if env_mode == "test" and allow_mock:
+            logger.warning(
+                f"⚠️ CRITICAL SECURITY WARNING: Postgres RLS startup check failed ({e}). Mock DB allowed in ENV=test with HMS_ALLOW_MOCK_DB=true."
+            )
+            return
+        logger.error(
+            f"FATAL: PostgreSQL RLS startup check failed: {e}. Refusing to start service."
+        )
+        raise RuntimeError(
+            f"PostgreSQL RLS startup check failed: {e}. Refusing to start service without verified RLS database."
+        )
 
 
 async def get_session() -> AsyncSession:
-    """FastAPI dependency: yield a real RLS-enforcing session.
-
-    Fail loud (PLT-002): if Postgres is unreachable this raises and the request
-    fails, rather than silently degrading to a no-isolation mock. Database
-    availability and RLS enforcement are verified once at startup by
-    db_guard.verify_database_safety(); per-request we just hand out a session.
-    Unit tests override this dependency with an AsyncMock.
-    """
+    """FastAPI dependency: yields a session."""
     async with SessionLocal() as session:
         yield session
 

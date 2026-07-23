@@ -94,8 +94,15 @@ async def get_context(
         raise HTTPException(status_code=401, detail="missing bearer token")
     token = authorization.split(" ", 1)[1].strip()
 
+    env_mode = os.getenv("ENV", "development").lower()
     if DEV_MODE:
-        # DEV ONLY: `dev.<tenant>.<role>`
+        if env_mode in ["production", "staging"]:
+            logger.error("FATAL: Dev auth token fallback ('dev.<tenant>.<role>') attempted in production/staging.")
+            raise HTTPException(
+                status_code=500,
+                detail="FATAL: Dev auth token fallback ('dev.<tenant>.<role>') is forbidden in production/staging. Configure OIDC_ISSUER and OIDC_AUDIENCE."
+            )
+        # DEV/TEST ONLY: `dev.<tenant>.<role>`
         parts = token.split(".")
         if len(parts) != 3 or parts[0] != "dev":
             raise HTTPException(status_code=401, detail="invalid dev token")

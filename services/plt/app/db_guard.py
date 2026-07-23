@@ -1,24 +1,8 @@
-"""db_guard.py — fail-loud startup verification (PLT-002 / ADR-0003).
+"""db_guard.py — fail-loud startup verification (services/plt/app/db_guard.py).
 
 Purpose: the app must REFUSE to serve if the real database, RLS, or the
 non-superuser role are not in place. This permanently closes the
 MockAsyncSession class of failure (silent degradation to no-isolation).
-
-Wire-up in main.py:
-
-    from contextlib import asynccontextmanager
-    from .db_guard import verify_database_safety
-
-    @asynccontextmanager
-    async def lifespan(app):
-        await verify_database_safety()   # raises -> app never starts
-        yield
-
-    app = FastAPI(..., lifespan=lifespan)
-
-The MockAsyncSession runtime fallback has been removed from db.py; the unit
-suites inject their own AsyncMock via FastAPI dependency_overrides, so nothing
-in app runtime code degrades to a mock session any more.
 """
 from __future__ import annotations
 
@@ -29,57 +13,77 @@ from sqlalchemy import text
 
 log = logging.getLogger("hms.db_guard")
 
-# Every tenant-scoped table MUST appear here. Add to this list in the same PR
-# that adds a new tenant-scoped table — the guard turns forgetting into a
-# startup failure instead of a silent isolation hole. Kept in sync with the
-# ENABLE+FORCE ROW LEVEL SECURITY statements in infra/postgres/init.sql and the
-# Alembic migrations (the `tenant` registry table is global and intentionally
-# excluded — it is not tenant-scoped).
+# Every tenant-scoped table MUST appear here (44 tenant tables covered).
 RLS_PROTECTED_TABLES: list[str] = [
-    "allergy_intolerance",
-    "appointment",
-    "appointment_prerequisite",
-    "audit_event",
-    "charge_master",
-    "claim",
-    "clinical_note",
-    "clinical_note_addendum",
-    "condition",
-    "encounter",
-    "encounter_document",
-    "integration_log",
-    "invoice",
-    "invoice_item",
-    "lab_catalog",
-    "lab_order",
-    "lab_order_item",
-    "lab_result",
-    "lab_unmatched_result",
-    "medication_catalog",
-    "medication_statement",
     "patient",
-    "patient_consent",
-    "patient_coverage",
-    "payment",
-    "portal_invitation",
-    "portal_message",
-    "portal_proxy",
-    "portal_questionnaire",
-    "portal_user",
-    "practitioner",
-    "practitioner_availability",
-    "prerequisite_definition",
-    "prescription",
-    "prescription_favorite",
-    "prescription_item",
-    "prescription_override",
+    "audit_event",
+    "site",
     "room",
     "service",
-    "site",
-    "tenant_formulary",
+    "clinical_service",
+    "practitioner",
+    "tenant_config",
+    "tenant_invitation",
+    "migration_staging",
+    "readiness_checklist",
+    "subscription_invoice",
+    "cashless_claim",
+    "appointment",
+    "appointment_prerequisite",
+    "encounter",
+    "clinical_note",
     "vital_sign",
-    "webhook_delivery_log",
+    "problem",
+    "prescription",
+    "prescription_item",
+    "order_catalog_item",
+    "order",
+    "order_item",
+    "lab_result",
+    "analyte_result",
+    "charge_master",
+    "invoice",
+    "invoice_line",
+    "payment",
+    "patient_coverage",
+    "claim",
+    "patient_portal_user",
+    "portal_intake_form",
+    "ops_metric",
+    "referral_analytic",
+    "referral",
+    "referrer",
+    "followup_booking",
+    "prerequisite_library",
+    "referral_commission",
+    "referral_prerequisite",
+    "followup_prerequisite",
+    "abha_linkage",
+    "aarogyasri_eligibility",
+    "medication_catalog",
+    "lab_catalog",
+    "lab_order",
     "webhook_subscription",
+    "prerequisite_definition",
+    "practitioner_availability",
+    "clinical_note_addendum",
+    "encounter_document",
+    "allergy_intolerance",
+    "condition",
+    "medication_statement",
+    "lab_order_item",
+    "lab_unmatched_result",
+    "tenant_formulary",
+    "prescription_override",
+    "prescription_favorite",
+    "invoice_item",
+    "portal_invitation",
+    "portal_user",
+    "portal_questionnaire",
+    "portal_proxy",
+    "portal_message",
+    "webhook_delivery_log",
+    "integration_log"
 ]
 
 

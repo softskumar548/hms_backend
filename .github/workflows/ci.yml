@@ -9,9 +9,6 @@ on:
   pull_request:
 
 jobs:
-  # Fail-loud gate (PLT-002): runs with NO database service so it proves the app
-  # REFUSES to start without a verified, RLS-enforcing Postgres — the permanent
-  # defense against silent degradation to a no-isolation mock session.
   startup-guard:
     runs-on: ubuntu-latest
     steps:
@@ -24,7 +21,7 @@ jobs:
       - name: Install deps
         run: pip install -e "services/plt[dev]"
 
-      - name: Startup guard refuses without a database
+      - name: Startup guard refusal check (NO DB SERVICE)
         env:
           PYTHONPATH: libs
         run: pytest -q tests/test_startup_guard.py

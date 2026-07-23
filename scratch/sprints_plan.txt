@@ -1,0 +1,137 @@
+HMS — Next Sprints Plan (N1–N5)
+Combined backend (hms-platform) + frontend (hms-web) · from feature-complete-on-mocks to onboarded tenants on staging
+Supersedes sequencing in prior plans; ticket IDs from TEN plan carried over · July 2026
+Contents
+TOC \h \o "1-1"
+0. Where We Are & Plan Logic
+Both repos are feature-complete but unproven: the UI has run only against MSW mocks, the backend's nine bulk-built modules have never served the real UI, auth is a dev stub on both sides, and neither repo is under version control. The client's next commercial ask is end-to-end tenant management/onboarding, with a governed Platform Control Center behind it. The plan therefore runs: protect & integrate (N1) → real auth & staging (N2) → tenant onboarding (N3–N4 = TEN T1/T2) → control center + hardening (N5), with ABDM as a parallel workstream from N2 because its 3–6 month clock must start now. Cadence stays 2-week sprints; both teams work the same sprint on coupled tickets.
+Sprint N1 cannot start on unversioned code.
+Day 1, hour 1 of N1 is git init/commit/push + branch protection on BOTH repos (ticket N1-00). Integration means bisecting, reverting, and diffing — impossible without history. No other ticket may merge before N1-00 is done.
+Sprint N1 — Protect & Integrate (the truth sprint)
+Goal & demo:  MSW off; the full UI runs against the real FastAPI stack; both flagship Playwright specs green against docker compose; backend test suite verified. Demo: live end-to-end walkthrough of both flagship flows on the compose stack, plus CI running on both repos.
+ID
+Ticket (acceptance gist)
+Team
+Traces / dep
+N1-00
+Version control both repos: init on main, baseline commit, push, branch protection (PR + CI required); .gitignore verified (env, egg-info, node_modules, dist).
+Both
+BLOCKER · 0.5d
+N1-01
+Backend suite verification: run full pytest; fix reds; confirm the isolation test covers EVERY tenant-scoped table added by the nine modules (add missing cases); wire suite into CI on push.
+BE
+PLT-002 gate
+N1-02
+Seed expansion: realistic synthetic dataset (2 tenants × ~50 patients, schedules, encounters, orders, invoices, referrers, prereq library) so real-data screens aren't empty-state-only.
+BE
+supports N1-03+
+N1-03
+MSW-off integration, wave 1: patients + scheduling + check-in against live API; fix contract breaks on whichever side violates the FRD; regenerate + commit schema per backend fix.
+FE+BE
+REG/SCH/REF-061
+N1-04
+Integration wave 2: EMR + Rx + next-visit follow-up; verify 409-duplicate shape, alert/override payloads, DRAFT follow-up creation against real API.
+FE+BE
+EMR-013/RX-003 · dep N1-03
+N1-05
+Integration wave 3: orders/results + billing/till + referral timeline + portal reads; verify result flags, invoice splits, Aarogyasri indicator fixtures.
+FE+BE
+ORD/BIL/REF-064 · dep N1-04
+N1-06
+Playwright specs against live compose (not MSW): both flagship flows green headless in CI; MSW retained only as an explicit dev mode flag.
+FE
+UI-605 truly passes
+N1-07
+Telemetry/PII scrub verification against REAL response shapes; audit-event spot check: every patient-data screen action lands an audit row.
+FE+BE
+PLT-005, UI-703
+N1-08
+Contract debt log: every mock-vs-real mismatch recorded with which side changed and why — feeds FRD errata and prevents silent spec drift.
+Both
+process
+Sprint N2 — Real Auth & Staging (client-visible milestone)
+Goal & demo:  Keycloak/OIDC live on both sides with MFA; full stack deployed to staging.hms.zensynq.com over HTTPS with backups; client demo delivered from staging. Demo: login via real OIDC with TOTP, run both flagship flows on staging from a phone and a laptop.
+ID
+Ticket (acceptance gist)
+Team
+Traces / dep
+N2-01
+Keycloak deployment (compose service): realm, clients, tenant+role claims, TOTP MFA policy; admin bootstrap documented.
+BE
+TEN-106a
+N2-02
+Backend token validation: hms_auth internals replaced with OIDC JWT verification producing the same RequestContext; dev tokens rejected outside dev flag; auth failures audited.
+BE
+IAM-001/006/007 · dep N2-01
+N2-03
+Frontend AuthProvider swap: OIDC code+PKCE flow, silent refresh, logout; screens untouched (verified by zero diffs outside auth/); session-expiry mid-form preserves input.
+FE
+IAM-003 · dep N2-02
+N2-04
+Staging deploy: VPS hardened per checklist, DNS staging.hms.zensynq.com, TLS+HSTS, nginx serving web+api same-origin, 8000 unpublished, hourly encrypted off-box backups + one tested restore.
+BE
+DEV_SETUP §B
+N2-05
+Staging smoke + E2E: Playwright specs against staging; uptime/health monitoring + alert to ops channel.
+FE+BE
+dep N2-04
+N2-06
+Client demo pack: walkthrough script (both flows + portal), demo tenants reset script, recording; F1 (DRAFT follow-up) formally signed off in the demo meeting.
+Both
+U7 script, flag F1
+Sprint N3 — Tenant Onboarding I (executes TEN T1)
+Goal & demo:  An operator provisions a new tenant; its admin logs in via OIDC invite, completes the Setup Wizard, invites MFA-enrolled staff — under 30 minutes, recorded. Tickets TEN-101…TEN-108 as specified in the Tenant Management & Onboarding plan (provision API + lifecycle states, Operator Console shell with separate auth audience, editable config APIs + Admin Console v2, sites/services/charge-master setup, invite flow, Setup Wizard v1). TEN-106 shrinks to claim-mapping work since Keycloak landed in N2.
+Ticket detail lives in HMS-Tenant-Onboarding-Plan §3; this sprint imports them unchanged. Add here: N3-X1 (Both) — operator-route boundary test joins CI (tenant token can never reach operator endpoints), per the two-console rule.
+Sprint N4 — Tenant Onboarding II (executes TEN T2)
+Goal & demo:  A 500-row legacy CSV is imported, reconciled through the clinician gate, readiness checklist goes green, operator flips the tenant LIVE, and a full FHIR export downloads. Tickets TEN-201…TEN-208 (Migration Workbench with staged imports, critical-data clinician confirmation, readiness checklist engine, go-live flow, attestation service, operate views, offboard/export).
+Ticket detail in HMS-Tenant-Onboarding-Plan §4. Client decisions (a)–(c) from that plan's §5 — package names, who drives migration, operator-approved go-live — must be confirmed before N4 planning; chase them during N2's demo meeting. Exit of N4 = the client's 'end-to-end tenant management and onboarding' acceptance recording (plan §6).
+Sprint N5 — Platform Control Center & Hardening (executes T3)
+Goal & demo:  The operator sees and manages the whole platform: health wall, tenant vitals, flags, audited support impersonation with tenant-visible disclosure, break-glass with second approver, alerting. Demo: monitor → act → impersonate with banner → show the hospital's own audit recording it.
+ID
+Ticket (acceptance gist)
+Team
+Traces / dep
+TEN-301/302
+Operator metrics API (PHI-free by construction) + Control Center dashboard: health wall, tenant grid, activity stream, alert badges.
+BE+FE
+see T3 spec
+TEN-303
+Manage actions with reason + audit: flags, suspend/resume, force-logout, jobs, announcements.
+BE+FE
+—
+TEN-304
+Support impersonation: token exchange, banner, time-box, patient-content exclusion default, tenant-visible audit entry.
+BE+FE
+dep OIDC
+TEN-305
+Break-glass inspection: coded reason + ticket ref, second approver beyond single record, per-record logging, tenant disclosure.
+BE+FE
+IAM-004 pattern
+TEN-306/307
+Alerting rules → ops channel; boundary tests extended (operator cannot write clinical data outside break-glass) into permanent CI gate.
+BE
+—
+TEN-308
+Tenant transparency view: operator accesses visible in the hospital's own audit screen.
+FE
+trust feature
+N5-X1
+Performance/load sanity on staging at NFR-ish volumes (seeded 50k patients one tenant): patient search <2s, summary <3s measured.
+BE+FE
+NFR
+Parallel Workstream P — ABDM (starts in N2, runs through N5+)
+ABDM is 3–6 months of calendar time driven by external certification; it cannot wait for a sprint slot. One engineer (rotating pair) owns it continuously: P-1 sandbox registration + credentials (N2); P-2 ABHA create/verify at registration wired into REG + the registration UI's ABHA field (N3); P-3 HFR facility + HPR provider linkage in tenant onboarding (N4 — lands naturally inside the Setup Wizard as an 'ABDM' step for Indian tenants); P-4 FHIR conformance for M1 records + sandbox milestone testing (N5). Certification submission targets end of N5; production ABDM follows in the release train after.
+Exit Summary & Risks
+Sprint
+Exit criteria (all required)
+N1
+Both repos on protected main with CI; backend suite green incl. extended isolation coverage; MSW off; both Playwright flows green vs compose; contract-debt log written
+N2
+OIDC+MFA on staging; staging HTTPS live with tested backup restore; client demo delivered from staging; F1 signed off
+N3
+New-tenant provision→configured→staffed <30 min recorded; operator-route boundary test in CI
+N4
+Full onboarding acceptance recording per TEN plan §6; client decisions (a)–(c) resolved
+N5
+Control Center demo (monitor→act→impersonate→tenant-visible audit); load sanity numbers recorded; ABDM sandbox milestones on track
+Top risks: integration surfacing deep backend defects in the bulk-built modules (buffer: N1 has no feature tickets, only truth-finding; spill into early N2 is acceptable, staging slips a week); Keycloak learning curve (mitigate: N2-01 starts day 1 of N2 with the compose service, not mid-sprint); client decision latency on TEN §5 items (chase at the N2 demo, or N4 plans to the recommended defaults); ABDM external dependencies (owned continuously, never parked). Standing rule unchanged: synthetic data only until production infrastructure and counsel sign-offs exist.
