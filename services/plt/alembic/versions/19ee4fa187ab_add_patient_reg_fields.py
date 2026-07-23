@@ -9,6 +9,8 @@ Story / FRD: REG-001, REG-002, REG-009
 from __future__ import annotations
 
 from alembic import op
+import sqlalchemy as sa
+from sqlalchemy.dialects.postgresql import JSONB
 
 
 revision = '19ee4fa187ab'
@@ -18,31 +20,33 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # Idempotent DDL (IF NOT EXISTS), matching every other migration in this
-    # repo: infra/postgres/init.sql may already have created these columns on a
-    # fresh database, and the migration must still converge on older databases
-    # where they are missing.
-    op.execute("""
-    ALTER TABLE patient ADD COLUMN IF NOT EXISTS abha_number TEXT;
-    ALTER TABLE patient ADD COLUMN IF NOT EXISTS abha_address TEXT;
-    ALTER TABLE patient ADD COLUMN IF NOT EXISTS aarogyasri_id TEXT;
-    ALTER TABLE patient ADD COLUMN IF NOT EXISTS pmjay_id TEXT;
-    ALTER TABLE patient ADD COLUMN IF NOT EXISTS aadhaar_last_four VARCHAR(4);
-    ALTER TABLE patient ADD COLUMN IF NOT EXISTS referred_by_type TEXT;
-    ALTER TABLE patient ADD COLUMN IF NOT EXISTS referred_by_name TEXT;
-    ALTER TABLE patient ADD COLUMN IF NOT EXISTS referred_by_id TEXT;
-    ALTER TABLE patient ADD COLUMN IF NOT EXISTS gender TEXT;
-    ALTER TABLE patient ADD COLUMN IF NOT EXISTS email TEXT;
-    ALTER TABLE patient ADD COLUMN IF NOT EXISTS preferred_language TEXT;
-    ALTER TABLE patient ADD COLUMN IF NOT EXISTS address JSONB;
-    ALTER TABLE patient ADD COLUMN IF NOT EXISTS next_of_kin JSONB;
-    ALTER TABLE patient ADD COLUMN IF NOT EXISTS fhir_resource JSONB;
+    # Add columns to patient table
+    op.add_column('patient', sa.Column('abha_number', sa.Text(), nullable=True))
+    op.add_column('patient', sa.Column('abha_address', sa.Text(), nullable=True))
+    op.add_column('patient', sa.Column('aarogyasri_id', sa.Text(), nullable=True))
+    op.add_column('patient', sa.Column('pmjay_id', sa.Text(), nullable=True))
+    op.add_column('patient', sa.Column('aadhaar_last_four', sa.String(length=4), nullable=True))
+    op.add_column('patient', sa.Column('referred_by_type', sa.Text(), nullable=True))
+    op.add_column('patient', sa.Column('referred_by_name', sa.Text(), nullable=True))
+    op.add_column('patient', sa.Column('referred_by_id', sa.Text(), nullable=True))
+    op.add_column('patient', sa.Column('gender', sa.Text(), nullable=True))
+    op.add_column('patient', sa.Column('email', sa.Text(), nullable=True))
+    op.add_column('patient', sa.Column('preferred_language', sa.Text(), nullable=True))
+    op.add_column('patient', sa.Column('address', JSONB(), nullable=True))
+    op.add_column('patient', sa.Column('next_of_kin', JSONB(), nullable=True))
+    op.add_column('patient', sa.Column('fhir_resource', JSONB(), nullable=True))
 
-    CREATE INDEX IF NOT EXISTS ix_patient_abha ON patient (tenant_id, abha_number);
-    CREATE INDEX IF NOT EXISTS ix_patient_phone ON patient (tenant_id, phone);
-    CREATE INDEX IF NOT EXISTS ix_patient_fhir_resource
-        ON patient USING gin (fhir_resource jsonb_path_ops);
-    """)
+    # Create indexes
+    op.create_index('ix_patient_abha', 'patient', ['tenant_id', 'abha_number'], unique=False)
+    op.create_index('ix_patient_phone', 'patient', ['tenant_id', 'phone'], unique=False)
+    op.create_index(
+        'ix_patient_fhir_resource',
+        'patient',
+        ['fhir_resource'],
+        unique=False,
+        postgresql_using='gin',
+        postgresql_ops={'fhir_resource': 'jsonb_path_ops'}
+    )
 
 
 def downgrade() -> None:

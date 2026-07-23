@@ -4,12 +4,14 @@ must be an admin role, not the runtime hms_app role.
 """
 from __future__ import annotations
 
+import asyncio
 import os
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import create_engine, pool
+from sqlalchemy import pool
 from sqlalchemy.engine import Connection
+from sqlalchemy.ext.asyncio import async_engine_from_config
 
 config = context.config
 
@@ -67,21 +69,18 @@ def do_run_migrations(connection: Connection) -> None:
         context.run_migrations()
 
 
-def run_migrations_online() -> None:
-    # Run migrations over the SYNC psycopg2 driver, not asyncpg. These migrations
-    # use multi-statement op.execute() DDL blocks; asyncpg prepares every
-    # statement and Postgres rejects multiple commands in a prepared statement
-    # ("cannot insert multiple commands into a prepared statement"). psycopg2
-    # applies the SQL with the simple query protocol (like psql), so the same
-    # DDL runs cleanly. The app itself still connects via asyncpg at runtime.
-    sync_url = _url.replace("+asyncpg", "+psycopg2")
-    connectable = create_engine(sync_url, poolclass=pool.NullPool)
-    with connectable.connect() as connection:
-        do_run_migrations(connection)
-    connectable.dispose()
+async def run_migrations_online() -> None:
+    connectable = async_engine_from_config(
+        config.get_section(config.config_ini_section, {}),
+        prefix="sqlalchemy.",
+        poolclass=pool.NullPool,
+    )
+    async with connectable.connect() as connection:
+        await connection.run_sync(do_run_migrations)
+    await connectable.dispose()
 
 
 if context.is_offline_mode():
     run_migrations_offline()
 else:
-    run_migrations_online()
+    asyncio.run(run_migrations_online())
