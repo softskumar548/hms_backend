@@ -264,8 +264,8 @@ async def view_portal_medical_records(
                 text(
                     "SELECT r.id, lc.name as test_name, r.value, r.unit, r.reference_range, r.is_abnormal, r.is_critical, r.resulted_at "
                     "FROM lab_result r JOIN lab_catalog lc ON r.test_id = lc.id "
-                    "WHERE r.patient_id = :pid"
-                ).bindparams(pid=patient_id)
+                    "WHERE r.patient_id = CAST(:pid AS uuid)"
+                ).bindparams(pid=str(patient_id))
             )
         ).mappings().all()
 

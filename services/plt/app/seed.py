@@ -52,7 +52,7 @@ SERVICES = [
     ("svc_gp", "General Consultation", 15),
     ("svc_cardio", "Cardiology Consultation", 30),
     ("svc_usg", "Ultrasound Abdomen", 30),
-    ("svc_ct", "CT Scan (contrast)", 45),
+    ("svc_ct", "CT Scan Cardiology", 45),
     ("svc_lab", "Lab Sample Collection", 10),
     ("svc_fu", "Follow-up Review", 15),
 ]
@@ -91,7 +91,7 @@ CHARGES = [
     ("chg_gp", "CON-GP", "General Consultation", "consultation", 300),
     ("chg_cardio", "CON-CAR", "Cardiology Consultation", "consultation", 800),
     ("chg_usg", "IMG-USG", "Ultrasound Abdomen", "imaging", 1200),
-    ("chg_ct", "IMG-CT", "CT Scan with contrast", "imaging", 4500),
+    ("chg_ct", "IMG-CT", "CT Scan Cardiology", "imaging", 4500),
     ("chg_cbc", "LAB-CBC", "Complete Blood Count", "laboratory", 350),
     ("chg_fbs", "LAB-FBS", "Fasting Blood Sugar", "laboratory", 150),
     ("chg_fu", "CON-FU", "Follow-up Review", "consultation", 200),
@@ -134,6 +134,14 @@ async def _seed_tenant(tid: str) -> None:
 
     async with SessionLocal() as s:  # hms_app role — RLS applies
         await _exec(s, "SELECT set_config('app.tenant_id', :t, true)", t=tid)
+
+        # Clear transactional tables for fresh reproducible state
+        for tbl in ["appointment_prerequisite", "payment", "invoice_item", "invoice", 
+                    "lab_result", "lab_order_item", "lab_order", "prescription_item", 
+                    "prescription", "vital_sign", "clinical_note", "encounter", 
+                    "condition", "allergy_intolerance", "patient_consent", 
+                    "patient_coverage", "appointment", "patient"]:
+            await _exec(s, f"DELETE FROM {tbl} WHERE tenant_id = :t", t=tid)
 
         # --- Facility & catalogs -------------------------------------------
         sites = [f"site_{tid}_main", f"site_{tid}_annex"]

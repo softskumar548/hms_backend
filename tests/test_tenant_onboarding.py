@@ -34,10 +34,13 @@ def test_end_to_end_tenant_onboarding_journey():
     assert resp.json()["status"] == "provisioned"
 
     # 2. Setup Wizard configuration (TEN-104)
+    site_id = f"site_{tenant_id}"
+    room_id = f"room_{tenant_id}"
+    svc_id = f"svc_{tenant_id}"
     config_payload = {
-        "sites": [{"id": "site_n4_1", "name": "KIMS Vizag Site"}],
-        "rooms": [{"id": "room_n4_1", "site_id": "site_n4_1", "name": "Room 101 OPD"}],
-        "services": [{"id": "svc_n4_1", "name": "General OPD", "duration_minutes": 20}]
+        "sites": [{"id": site_id, "name": "KIMS Vizag Site"}],
+        "rooms": [{"id": room_id, "site_id": site_id, "name": "Room 101 OPD"}],
+        "services": [{"id": svc_id, "name": "General OPD", "duration_minutes": 20}]
     }
     resp = client.post(f"/tenants/{tenant_id}/wizard/config", json=config_payload, headers=headers)
     assert resp.status_code == 200

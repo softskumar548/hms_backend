@@ -211,7 +211,7 @@ async def get_tenant(
     """Retrieve details for a specific tenant (TEN-101). Operator gated."""
     _require_operator(ctx)
 
-    async with tenant_session(session, ctx) as s:
+    async with tenant_session(session, ctx, tenant_id=tenant_id) as s:
         row = (
             await s.execute(
                 text("SELECT id, name, region, locale, currency, features, status, created_at FROM tenant WHERE id = :id").bindparams(id=tenant_id)
@@ -249,7 +249,7 @@ async def update_tenant_status(
     """Update tenant lifecycle status (TEN-101). Operator gated."""
     _require_operator(ctx)
 
-    async with tenant_session(session, ctx) as s:
+    async with tenant_session(session, ctx, tenant_id=tenant_id) as s:
         row = (
             await s.execute(
                 text("SELECT id FROM tenant WHERE id = :id").bindparams(id=tenant_id)

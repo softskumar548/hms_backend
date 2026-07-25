@@ -203,12 +203,24 @@ async def book_appointment(
 ):
     """Book a new clinical appointment (SCH-002), executing conflict checks."""
     ctx.require_role("admin", "receptionist")
+    logger.error(f"BOOKING BODY: {body.model_dump()}")
     async with tenant_session(session, ctx) as s:
         # Check Patient/Practitioner/Room overlaps
         await check_booking_conflicts(
             s, body.practitioner_id, body.room_id, body.patient_id, body.start_time, body.end_time
         )
         
+        # Ensure practitioner exists if specified
+        if body.practitioner_id:
+            prac = (await s.execute(text("SELECT id FROM practitioner WHERE id = :id").bindparams(id=body.practitioner_id))).mappings().one_or_none()
+            if not prac:
+                raise HTTPException(status_code=404, detail=f"Practitioner '{body.practitioner_id}' not found")
+
+        # Ensure patient exists
+        pat = (await s.execute(text("SELECT id FROM patient WHERE id = CAST(:id AS uuid)").bindparams(id=str(body.patient_id)))).mappings().one_or_none()
+        if not pat:
+            raise HTTPException(status_code=404, detail=f"Patient '{body.patient_id}' not found")
+
         # Save appointment record (Initial state: BOOKED, or DRAFT if flagged)
         status = "BOOKED"
         
@@ -217,10 +229,10 @@ async def book_appointment(
                 text(
                     "INSERT INTO appointment "
                     "(tenant_id, patient_id, practitioner_id, site_id, room_id, service_id, status, start_time, end_time, referred_by_id, referred_by_name) "
-                    "VALUES (:tid, :patient_id, :practitioner_id, :site_id, :room_id, :service_id, :status, :start, :end, :ref_id, :ref_name) "
+                    "VALUES (:tid, CAST(:patient_id AS uuid), :practitioner_id, :site_id, :room_id, :service_id, :status, :start, :end, :ref_id, :ref_name) "
                     "RETURNING id, patient_id, practitioner_id, site_id, room_id, service_id, status, start_time, end_time, referred_by_id, referred_by_name"
                 ).bindparams(
-                    tid=ctx.tenant_id, patient_id=body.patient_id, practitioner_id=body.practitioner_id,
+                    tid=ctx.tenant_id, patient_id=str(body.patient_id), practitioner_id=body.practitioner_id,
                     site_id=body.site_id, room_id=body.room_id, service_id=body.service_id, status=status,
                     start=body.start_time, end=body.end_time, ref_id=body.referred_by_id, ref_name=body.referred_by_name
                 )
@@ -254,7 +266,35 @@ async def book_appointment(
         "start_time": body.start_time.isoformat()
     })
 
-    return AppointmentOut(**row)
+    return AppointmentOut(**dict(row))
+
+
+@router.get("/appointments", response_model=list[AppointmentOut])
+async def list_appointments(
+    status: Optional[str] = None,
+    patient_id: Optional[UUID] = None,
+    ctx: RequestContext = Depends(auth),
+    session: AsyncSession = Depends(get_session)
+):
+    """List appointments for tenant (SCH-002)."""
+    async with tenant_session(session, ctx) as s:
+        sql = (
+            "SELECT a.id, a.patient_id, CONCAT(p.given_name, ' ', p.family_name) AS patient_name, "
+            "a.practitioner_id, a.site_id, a.room_id, a.service_id, a.status, a.start_time, a.end_time, "
+            "a.referred_by_id, a.referred_by_name FROM appointment a "
+            "LEFT JOIN patient p ON a.patient_id = p.id WHERE 1=1"
+        )
+        params = {}
+        if patient_id:
+            sql += " AND a.patient_id = CAST(:pid AS uuid)"
+            params["pid"] = str(patient_id)
+        if status:
+            sql += " AND a.status = :status"
+            params["status"] = status
+        sql += " ORDER BY a.start_time DESC"
+        rows = (await s.execute(text(sql).bindparams(**params))).mappings().all()
+        await s.commit()
+    return [AppointmentOut(**r) for r in rows]
 
 
 @router.get("/appointments/{appointment_id}", response_model=AppointmentDetailOut)
@@ -281,19 +321,19 @@ async def get_appointment_details(
             JOIN service sv ON a.service_id = sv.id
             WHERE a.id = :app_id
         """
-        row = (await s.execute(text(sql).bindparams(app_id=appointment_id))).mappings().one_or_none()
+        row = (await s.execute(text(sql).bindparams(app_id=str(appointment_id)))).mappings().one_or_none()
         if not row:
             raise HTTPException(status_code=404, detail="Appointment not found")
 
         # Fetch prerequisite checklist status
         pre_sql = """
-            SELECT ap.prerequisite_id, ap.satisfied, ap.satisfied_at, ap.satisfied_by,
+            SELECT ap.prerequisite_id, ap.satisfied,
                    pd.code, pd.description, pd.enforcement_type
             FROM appointment_prerequisite ap
             JOIN prerequisite_definition pd ON ap.prerequisite_id = pd.id
             WHERE ap.appointment_id = :app_id
         """
-        pre_rows = (await s.execute(text(pre_sql).bindparams(app_id=appointment_id))).mappings().all()
+        pre_rows = (await s.execute(text(pre_sql).bindparams(app_id=str(appointment_id)))).mappings().all()
 
         await audit_record(
             s, ctx, action="read", resource_type="Appointment",
@@ -319,7 +359,7 @@ async def check_in_appointment(
         # Get existing details
         app_row = (
             await s.execute(
-                text("SELECT patient_id, status FROM appointment WHERE id = :id").bindparams(id=appointment_id)
+                text("SELECT patient_id, status FROM appointment WHERE id = :id").bindparams(id=str(appointment_id))
             )
         ).mappings().one_or_none()
         
@@ -336,7 +376,7 @@ async def check_in_appointment(
                     "UPDATE appointment SET status = 'ARRIVED', updated_at = now() "
                     "WHERE id = :id "
                     "RETURNING id, patient_id, practitioner_id, site_id, room_id, service_id, status, start_time, end_time, referred_by_id, referred_by_name"
-                ).bindparams(id=appointment_id)
+                ).bindparams(id=str(appointment_id))
             )
         ).mappings().one()
 
@@ -397,7 +437,7 @@ async def update_appointment_status(
     async with tenant_session(session, ctx) as s:
         app_row = (
             await s.execute(
-                text("SELECT patient_id FROM appointment WHERE id = :id").bindparams(id=appointment_id)
+                text("SELECT patient_id FROM appointment WHERE id = :id").bindparams(id=str(appointment_id))
             )
         ).mappings().one_or_none()
         
@@ -410,7 +450,7 @@ async def update_appointment_status(
                     "UPDATE appointment SET status = :status, updated_at = now() "
                     "WHERE id = :id "
                     "RETURNING id, patient_id, practitioner_id, site_id, room_id, service_id, status, start_time, end_time, referred_by_id, referred_by_name"
-                ).bindparams(id=appointment_id, status=status)
+                ).bindparams(id=str(appointment_id), status=status)
             )
         ).mappings().one()
 
@@ -430,7 +470,7 @@ async def update_appointment_status(
         "status": status
     })
 
-    return AppointmentOut(**row)
+    return AppointmentOut(**dict(row))
 
 
 @router.post("/appointments/{appointment_id}/prerequisites/{prereq_id}/satisfy")
@@ -447,11 +487,10 @@ async def satisfy_prerequisite(
         res = await s.execute(
             text(
                 "UPDATE appointment_prerequisite SET "
-                "satisfied = :sat, satisfied_at = :now, satisfied_by = :sb "
+                "satisfied = :sat "
                 "WHERE appointment_id = :app_id AND prerequisite_id = :pre_id"
             ).bindparams(
-                sat=satisfied, now=datetime.now() if satisfied else None,
-                sb=ctx.user_id if satisfied else None, app_id=appointment_id, pre_id=prereq_id
+                sat=satisfied, app_id=str(appointment_id), pre_id=prereq_id
             )
         )
         if res.rowcount == 0:
@@ -462,7 +501,7 @@ async def satisfy_prerequisite(
 
 @router.get("/queue", response_model=list[QueueItemOut])
 async def get_clinic_queue(
-    site_id: str,
+    site_id: str = Query(default="site_apollo_main"),
     ctx: RequestContext = Depends(auth),
     session: AsyncSession = Depends(get_session)
 ):

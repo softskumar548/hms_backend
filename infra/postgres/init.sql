@@ -190,11 +190,13 @@ CREATE TABLE IF NOT EXISTS medication_catalog (
 );
 
 CREATE TABLE IF NOT EXISTS lab_catalog (
-    id           TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
-    tenant_id    TEXT NOT NULL REFERENCES tenant(id),
-    test_code    TEXT NOT NULL,
-    name         TEXT NOT NULL,
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+    id                       TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    tenant_id                TEXT NOT NULL REFERENCES tenant(id),
+    test_code                TEXT NOT NULL,
+    name                     TEXT NOT NULL,
+    specimen_requirements    TEXT,
+    preparation_requirements TEXT,
+    created_at               TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS lab_order (
@@ -272,8 +274,11 @@ CREATE TABLE IF NOT EXISTS clinical_note (
     tenant_id         TEXT NOT NULL REFERENCES tenant(id),
     encounter_id      TEXT REFERENCES encounter(id),
     template_type     TEXT,
+    structured_content JSONB,
     rich_text_content TEXT,
-    created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+    version           INT DEFAULT 1,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS clinical_note_addendum (
@@ -357,12 +362,20 @@ CREATE TABLE IF NOT EXISTS lab_order_item (
 );
 
 CREATE TABLE IF NOT EXISTS lab_result (
-    id        TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
-    tenant_id TEXT NOT NULL REFERENCES tenant(id),
-    test_id   TEXT REFERENCES lab_catalog(id),
-    value     NUMERIC,
-    unit      TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    id              TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    tenant_id       TEXT NOT NULL REFERENCES tenant(id),
+    order_id        TEXT REFERENCES lab_order(id),
+    patient_id      UUID REFERENCES patient(id),
+    test_id         TEXT REFERENCES lab_catalog(id),
+    value           NUMERIC,
+    unit            TEXT,
+    reference_range TEXT,
+    is_abnormal     BOOLEAN DEFAULT FALSE,
+    is_critical     BOOLEAN DEFAULT FALSE,
+    resulted_at     TIMESTAMPTZ DEFAULT now(),
+    reviewed_at     TIMESTAMPTZ,
+    reviewed_by     TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS lab_unmatched_result (
