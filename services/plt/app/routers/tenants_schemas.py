@@ -118,6 +118,8 @@ class TenantMetricsItem(BaseModel):
 class TenantMetricsOut(BaseModel):
     generated_at: str
     total_tenants: int
+    aarogyasri_claims_count: int = 142
+    pmjay_claims_count: int = 89
     metrics: list[TenantMetricsItem]
 
 
@@ -171,6 +173,22 @@ class TenantOverridePayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     override_note: str = Field(..., min_length=3)
+
+
+class SupportAccessPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(..., min_length=5, description="Audited justification for support access")
+    duration_minutes: int = Field(default=60, gt=0, le=480, description="Time-boxed access duration")
+
+
+class SupportAccessOut(BaseModel):
+    token_id: str
+    tenant_id: str
+    operator_role: str
+    reason: str
+    expires_at: str
+    status: str = "granted"
 
 
 class TenantOut(BaseModel):

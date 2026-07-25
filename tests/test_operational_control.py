@@ -29,6 +29,27 @@ def test_multi_tenant_metrics_and_invoicing():
     assert inv_data["amount_inr"] == 75000.0
     assert inv_data["status"] == "issued"
 
+    # 3. List SaaS subscription invoices (TEN-302)
+    resp_list = client.get("/tenants/apollo/invoices", headers=headers)
+    assert resp_list.status_code == 200
+    invoices = resp_list.json()
+    assert len(invoices) >= 1
+    assert invoices[0]["tenant_id"] == "apollo"
+
+
+def test_operator_support_access_impersonation():
+    headers = {"Authorization": "Bearer dev.apollo.operator"}
+    support_payload = {
+        "reason": "Investigating payment reconciliation query from hospital admin",
+        "duration_minutes": 60
+    }
+    resp = client.post("/tenants/apollo/support-access", json=support_payload, headers=headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["tenant_id"] == "apollo"
+    assert data["status"] == "granted"
+    assert data["token_id"].startswith("SUP-APOLLO-")
+
 
 def test_aarogyasri_cashless_pre_auth_claim():
     headers = {"Authorization": "Bearer dev.apollo.physician"}
