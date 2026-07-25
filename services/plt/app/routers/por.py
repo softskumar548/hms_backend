@@ -221,21 +221,21 @@ async def view_portal_medical_records(
         # 1. Fetch active problems
         conditions = (
             await s.execute(
-                text("SELECT code, display, status FROM condition WHERE patient_id = :pid").bindparams(pid=patient_id)
+                text("SELECT code, display, status FROM condition WHERE patient_id = CAST(:pid AS uuid)").bindparams(pid=str(patient_id))
             )
         ).mappings().all()
 
         # 2. Fetch allergies
         allergies = (
             await s.execute(
-                text("SELECT substance_code, substance_display, criticality FROM allergy_intolerance WHERE patient_id = :pid").bindparams(pid=patient_id)
+                text("SELECT substance_code, substance_display, criticality FROM allergy_intolerance WHERE patient_id = CAST(:pid AS uuid)").bindparams(pid=str(patient_id))
             )
         ).mappings().all()
 
         # 3. Fetch signed prescriptions history
         prescriptions = (
             await s.execute(
-                text("SELECT id, practitioner_id, status, created_at, signed_at FROM prescription WHERE patient_id = :pid AND status = 'signed'").bindparams(pid=patient_id)
+                text("SELECT id, practitioner_id, status, created_at, signed_at FROM prescription WHERE patient_id = CAST(:pid AS uuid) AND status = 'signed'").bindparams(pid=str(patient_id))
             )
         ).mappings().all()
 

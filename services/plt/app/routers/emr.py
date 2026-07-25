@@ -270,14 +270,14 @@ async def add_encounter_addendum(
                     "INSERT INTO clinical_note_addendum (tenant_id, encounter_id, author_id, content) "
                     "VALUES (:tid, :enc_id, :auth, :content) "
                     "RETURNING id, encounter_id, author_id, content, created_at"
-                ).bindparams(tid=ctx.tenant_id, enc_id=encounter_id, auth=ctx.user_id, content=body.content)
+                ).bindparams(tid=ctx.tenant_id, enc_id=str(encounter_id), auth=ctx.user_id, content=body.content)
             )
         ).mappings().one()
 
         # Mark status as amended if not already
         if enc["status"] != "amended":
             await s.execute(
-                text("UPDATE encounter SET status = 'amended', updated_at = now() WHERE id = :id").bindparams(id=encounter_id)
+                text("UPDATE encounter SET status = 'amended', updated_at = now() WHERE id = :id").bindparams(id=str(encounter_id))
             )
 
         await audit_record(
