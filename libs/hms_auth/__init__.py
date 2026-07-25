@@ -98,9 +98,8 @@ async def get_context(
     token = authorization.split(" ", 1)[1].strip()
 
     env_mode = os.getenv("ENV", "development").lower()
-    allow_dev = os.getenv("ALLOW_DEV_TOKENS", "").lower() in ("true", "1") or env_mode in ("development", "dev", "test")
-    if DEV_MODE or (token.startswith("dev.") and allow_dev):
-        if env_mode in ("production", "staging") and not os.getenv("ALLOW_DEV_TOKENS", "").lower() in ("true", "1"):
+    if token.startswith("dev."):
+        if not allow_dev or env_mode in ("production", "staging"):
             logger.error("AUTH_FAILURE: Dev auth token fallback attempted outside allowed dev environment (ENV=%s).", env_mode)
             raise HTTPException(
                 status_code=401,
@@ -146,14 +145,26 @@ async def get_context(
         jwk = keys[kid]
         public_key = PyJWK(jwk).key
 
-        # Decode and verify the signature and claim constraints
+        # Decode and verify signature & issuer
         payload = jwt.decode(
             token,
             public_key,
             algorithms=["RS256"],
-            audience=OIDC_AUDIENCE,
             issuer=OIDC_ISSUER,
+            options={"verify_aud": False}
         )
+
+        # Verify audience (aud claim or authorized party azp claim)
+        aud_claims = payload.get("aud")
+        if isinstance(aud_claims, str):
+            aud_claims = [aud_claims]
+        elif not isinstance(aud_claims, list):
+            aud_claims = []
+        azp_claim = payload.get("azp")
+        
+        if OIDC_AUDIENCE and OIDC_AUDIENCE not in aud_claims and azp_claim != OIDC_AUDIENCE:
+            logger.warning("AUTH_FAILURE: Token audience '%s' or azp '%s' does not match expected OIDC_AUDIENCE '%s'", aud_claims, azp_claim, OIDC_AUDIENCE)
+            raise HTTPException(status_code=401, detail="invalid token audience")
     except ExpiredSignatureError:
         logger.warning("AUTH_FAILURE: Bearer token expired.")
         raise HTTPException(status_code=401, detail="token signature has expired")
@@ -164,8 +175,12 @@ async def get_context(
         logger.warning("AUTH_FAILURE: Token validation failed: %s", e)
         raise HTTPException(status_code=401, detail=f"token validation failed: {e!s}")
 
-    # Extract tenant identification from claims (supports standard, custom, or app.tenant_id)
-    tenant_id = payload.get("app.tenant_id") or payload.get("tenant_id") or payload.get("tenant")
+    # Extract tenant identification from claims (supports nested dict {"app": {"tenant_id": ...}}, string claim, etc.)
+    tenant_id = None
+    if isinstance(payload.get("app"), dict):
+        tenant_id = payload["app"].get("tenant_id")
+    if not tenant_id:
+        tenant_id = payload.get("app.tenant_id") or payload.get("tenant_id") or payload.get("tenant")
     if not tenant_id:
         raise HTTPException(status_code=401, detail="missing tenant identifier claim in token")
 
@@ -197,11 +212,13 @@ async def get_context(
         if isinstance(access, dict):
             roles.extend(access.get("roles", []))
 
-    # Match against the allowed set of dev roles
+    # Match against the allowed set of dev roles (map 'doctor' -> 'physician')
+    ROLE_MAPPING = {"doctor": "physician"}
     matched_role = None
     for r in roles:
-        if r in _DEV_ROLES:
-            matched_role = r
+        mapped_r = ROLE_MAPPING.get(r, r)
+        if mapped_r in _DEV_ROLES:
+            matched_role = mapped_r
             break
 
     if not matched_role:
