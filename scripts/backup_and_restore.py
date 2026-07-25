@@ -10,7 +10,9 @@ DB_USER = os.environ.get("POSTGRES_USER", "postgres")
 DB_HOST = os.environ.get("POSTGRES_HOST", "postgres")
 DB_PORT = os.environ.get("POSTGRES_PORT", "5432")
 DB_NAME = os.environ.get("POSTGRES_DB", "hms")
-PASSPHRASE = os.environ.get("BACKUP_PASSPHRASE", "hms_india_vps_backup_secret_2026")
+PASSPHRASE = os.environ.get("BACKUP_PASSPHRASE")
+if not PASSPHRASE:
+    raise ValueError("BACKUP_PASSPHRASE environment variable is required for backup encryption")
 
 BACKUP_DIR = "/code/backups"
 RESTORE_DB = "hms_restore_test"

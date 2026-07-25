@@ -4,6 +4,8 @@ ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 
 WORKDIR /code
 
+RUN apt-get update && apt-get install -y postgresql-client openssl && rm -rf /var/lib/apt/lists/*
+
 # Shared libs are mounted/copied onto PYTHONPATH so services import hms_* directly.
 ENV PYTHONPATH=/code:/libs
 
