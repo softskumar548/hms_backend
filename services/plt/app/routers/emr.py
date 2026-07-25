@@ -88,7 +88,7 @@ async def save_clinical_note(
         # Fetch encounter details
         enc = (
             await s.execute(
-                text("SELECT patient_id, status FROM encounter WHERE id = :id").bindparams(id=encounter_id)
+                text("SELECT patient_id, status FROM encounter WHERE id = :id").bindparams(id=str(encounter_id))
             )
         ).mappings().one_or_none()
 
@@ -100,7 +100,7 @@ async def save_clinical_note(
         # Check existing note
         note = (
             await s.execute(
-                text("SELECT id, version FROM clinical_note WHERE encounter_id = :enc_id").bindparams(enc_id=encounter_id)
+                text("SELECT id, version FROM clinical_note WHERE encounter_id = :enc_id").bindparams(enc_id=str(encounter_id))
             )
         ).mappings().one_or_none()
 
@@ -110,10 +110,10 @@ async def save_clinical_note(
                 await s.execute(
                     text(
                         "INSERT INTO clinical_note (tenant_id, encounter_id, template_type, structured_content, rich_text_content, version) "
-                        "VALUES (:tid, :enc_id, :template, :structured, :rich, 1) "
+                        "VALUES (:tid, :enc_id, :template, CAST(:structured AS jsonb), :rich, 1) "
                         "RETURNING id, encounter_id, template_type, structured_content, rich_text_content, version"
                     ).bindparams(
-                        tid=ctx.tenant_id, enc_id=encounter_id, template=body.template_type,
+                        tid=ctx.tenant_id, enc_id=str(encounter_id), template=body.template_type,
                         structured=json.dumps(body.structured_content) if body.structured_content else None,
                         rich=body.rich_text_content
                     )
@@ -125,7 +125,7 @@ async def save_clinical_note(
             row = (
                 await s.execute(
                     text(
-                        "UPDATE clinical_note SET template_type = :template, structured_content = :structured, "
+                        "UPDATE clinical_note SET template_type = :template, structured_content = CAST(:structured AS jsonb), "
                         "rich_text_content = :rich, version = :ver "
                         "WHERE id = :id "
                         "RETURNING id, encounter_id, template_type, structured_content, rich_text_content, version"
@@ -136,6 +136,16 @@ async def save_clinical_note(
                     )
                 )
             ).mappings().one()
+
+        if body.structured_content and body.structured_content.get("icd10_code"):
+            code = body.structured_content["icd10_code"]
+            display = body.structured_content.get("icd10_display", code)
+            await s.execute(
+                text(
+                    "INSERT INTO condition (tenant_id, patient_id, code, display, clinical_status) "
+                    "VALUES (:tid, CAST(:pid AS uuid), :code, :display, 'active')"
+                ).bindparams(tid=ctx.tenant_id, pid=str(enc["patient_id"]), code=code, display=display)
+            )
 
         await audit_record(
             s, ctx, action="update", resource_type="ClinicalNote",
@@ -160,7 +170,7 @@ async def sign_off_encounter(
         # Fetch encounter details
         enc = (
             await s.execute(
-                text("SELECT patient_id, status FROM encounter WHERE id = :id").bindparams(id=encounter_id)
+                text("SELECT patient_id, status FROM encounter WHERE id = :id").bindparams(id=str(encounter_id))
             )
         ).mappings().one_or_none()
 
@@ -207,7 +217,7 @@ async def sign_off_encounter(
                     "UPDATE encounter SET status = 'signed', signed_at = now(), signed_by = :sb, updated_at = now() "
                     "WHERE id = :id "
                     "RETURNING id, appointment_id, patient_id, practitioner_id, site_id, status, created_at, updated_at, signed_at, signed_by"
-                ).bindparams(id=encounter_id, sb=ctx.user_id)
+                ).bindparams(id=str(encounter_id), sb=ctx.user_id)
             )
         ).mappings().one()
 
@@ -244,7 +254,7 @@ async def add_encounter_addendum(
         # Fetch encounter status
         enc = (
             await s.execute(
-                text("SELECT patient_id, status FROM encounter WHERE id = :id").bindparams(id=encounter_id)
+                text("SELECT patient_id, status FROM encounter WHERE id = :id").bindparams(id=str(encounter_id))
             )
         ).mappings().one_or_none()
 
@@ -282,6 +292,33 @@ async def add_encounter_addendum(
 
 # --- Patient Reconciliation Masters ---
 
+@router.get("/patients/{patient_id}/allergies", response_model=list[AllergyIntoleranceOut])
+async def list_allergies(
+    patient_id: UUID,
+    request: Request,
+    ctx: RequestContext = Depends(auth),
+    session: AsyncSession = Depends(get_session)
+):
+    """List active allergies for a patient (EMR-005)."""
+    ctx.require_role("admin", "physician", "nurse", "receptionist")
+    async with tenant_session(session, ctx) as s:
+        rows = (
+            await s.execute(
+                text(
+                    "SELECT id, patient_id, substance_code, substance_display, reaction, severity, criticality, is_no_known, asserted_at, asserted_by "
+                    "FROM allergy_intolerance WHERE patient_id = CAST(:pid AS uuid) ORDER BY asserted_at DESC"
+                ).bindparams(pid=str(patient_id))
+            )
+        ).mappings().all()
+        await audit_record(
+            s, ctx, action="read", resource_type="AllergyIntolerance",
+            resource_id=str(patient_id), patient_id=str(patient_id),
+            source_ip=request.client.host if request.client else None
+        )
+        await s.commit()
+    return [AllergyIntoleranceOut(**r) for r in rows]
+
+
 @router.post("/patients/{patient_id}/allergies", response_model=AllergyIntoleranceOut, status_code=201)
 async def assert_allergy(
     patient_id: UUID,
@@ -297,10 +334,10 @@ async def assert_allergy(
             await s.execute(
                 text(
                     "INSERT INTO allergy_intolerance (tenant_id, patient_id, substance_code, substance_display, reaction, severity, criticality, is_no_known, asserted_by) "
-                    "VALUES (:tid, :pid, :code, :display, :reaction, :severity, :criticality, :no_known, :sb) "
+                    "VALUES (:tid, CAST(:pid AS uuid), :code, :display, :reaction, :severity, :criticality, :no_known, :sb) "
                     "RETURNING id, patient_id, substance_code, substance_display, reaction, severity, criticality, is_no_known, asserted_at, asserted_by"
                 ).bindparams(
-                    tid=ctx.tenant_id, pid=patient_id, code=body.substance_code, display=body.substance_display,
+                    tid=ctx.tenant_id, pid=str(patient_id), code=body.substance_code, display=body.substance_display,
                     reaction=body.reaction, severity=body.severity, criticality=body.criticality, no_known=body.is_no_known, sb=ctx.user_id
                 )
             )
@@ -400,7 +437,7 @@ async def record_vital_sign(
         # Fetch encounter patient
         enc = (
             await s.execute(
-                text("SELECT patient_id, status FROM encounter WHERE id = :id").bindparams(id=encounter_id)
+                text("SELECT patient_id, status FROM encounter WHERE id = :id").bindparams(id=str(encounter_id))
             )
         ).mappings().one_or_none()
 
@@ -426,7 +463,7 @@ async def record_vital_sign(
                     "VALUES (:tid, :enc_id, :pid, :type, :value, :unit) "
                     "RETURNING id, encounter_id, patient_id, type, value, unit, recorded_at"
                 ).bindparams(
-                    tid=ctx.tenant_id, enc_id=encounter_id, pid=patient_id,
+                    tid=ctx.tenant_id, enc_id=str(encounter_id), pid=patient_id,
                     type=t, value=val, unit=body.unit
                 )
             )

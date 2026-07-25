@@ -405,10 +405,10 @@ async def get_analyte_trends(
             SELECT r.test_id, lc.name as test_name, lc.test_code, r.value, r.unit, r.resulted_at
             FROM lab_result r
             JOIN lab_catalog lc ON r.test_id = lc.id
-            WHERE r.patient_id = :pid
+            WHERE r.patient_id = CAST(:pid AS uuid)
             ORDER BY r.test_id, r.resulted_at ASC
         """
-        rows = (await s.execute(text(sql).bindparams(pid=patient_id))).mappings().all()
+        rows = (await s.execute(text(sql).bindparams(pid=str(patient_id)))).mappings().all()
         await s.commit()
 
     # Group analytes

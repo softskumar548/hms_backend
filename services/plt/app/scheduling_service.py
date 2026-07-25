@@ -30,7 +30,7 @@ async def check_booking_conflicts(
         "end": end_time,
         "practitioner_id": practitioner_id,
         "room_id": room_id,
-        "patient_id": patient_id
+        "patient_id": str(patient_id)
     }
     
     exclude_clause = ""
@@ -45,7 +45,7 @@ async def check_booking_conflicts(
         WHERE status NOT IN ('CANCELLED', 'NO_SHOW', 'DRAFT')
           AND start_time < :end 
           AND end_time > :start
-          AND (practitioner_id = :practitioner_id OR room_id = :room_id OR patient_id = :patient_id)
+          AND (practitioner_id = :practitioner_id OR room_id = :room_id OR patient_id = CAST(:patient_id AS uuid))
           {exclude_clause}
     """
     
@@ -160,7 +160,7 @@ async def verify_and_enforce_prerequisites(
         JOIN prerequisite_definition pd ON ap.prerequisite_id = pd.id
         WHERE ap.appointment_id = :app_id
     """
-    rows = (await session.execute(text(sql).bindparams(app_id=appointment_id))).mappings().all()
+    rows = (await session.execute(text(sql).bindparams(app_id=str(appointment_id)))).mappings().all()
 
     hard_stops = []
     advisories = []

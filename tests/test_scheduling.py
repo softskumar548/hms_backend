@@ -143,8 +143,11 @@ def test_create_appointment_success(mock_conflicts, mock_audit, mock_event, db_s
         "referred_by_name": None
     }
     
-    # 2 executes: SET LOCAL app.tenant_id, INSERT appointment
-    db_session.execute.side_effect = [AsyncMock(), mock_insert_res]
+    mock_found = MagicMock()
+    mock_found.mappings.return_value.one_or_none.return_value = {"id": "found"}
+
+    # 4 executes: SET LOCAL app.tenant_id, SELECT practitioner, SELECT patient, INSERT appointment
+    db_session.execute.side_effect = [AsyncMock(), mock_found, mock_found, mock_insert_res]
 
     response = client.post(
         "/scheduling/appointments",

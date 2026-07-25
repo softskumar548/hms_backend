@@ -114,6 +114,7 @@ class AppointmentPrerequisiteOut(BaseModel):
 class AppointmentOut(BaseModel):
     id: UUID
     patient_id: UUID
+    patient_name: Optional[str] = None
     practitioner_id: str
     site_id: str
     room_id: str
