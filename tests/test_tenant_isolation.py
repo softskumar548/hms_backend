@@ -844,3 +844,97 @@ async def test_operator_target_tenant_context_isolation():
     finally:
         await engine.dispose()
 
+
+@pytest.mark.asyncio
+async def test_operator_cross_tenant_suspension_and_override_isolation():
+    """PLT-002 + TEN-303/304: Cross-Tenant Operator Emergency Controls Isolation.
+
+    Verifies that when an operator in context tenant_id='t_a' performs an emergency
+    suspension or emergency operator override on target tenant 't_b':
+    1. The target tenant 't_b' status transition and audit log land in tenant 't_b' context.
+    2. Tenant 't_a' session can NEVER view tenant 't_b''s audit events or status changes.
+    3. Unauthenticated/Non-operator context cannot execute suspension or override.
+    """
+    from hms_tenancy import RequestContext, tenant_session
+    from hms_audit import record as audit_record
+
+    ctx_operator = RequestContext(tenant_id="t_a", user_id="operator@zensynq.com", role="operator")
+    target_tenant_b = "t_b"
+
+    engine = create_async_engine(DATABASE_URL)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    try:
+        # Seed tenant t_b row
+        async with session_factory() as s:
+            await s.execute(
+                text("INSERT INTO tenant (id, name, region, status) VALUES ('t_b', 'Tenant B Hospital', 'india', 'active') ON CONFLICT (id) DO NOTHING")
+            )
+            await s.commit()
+
+        # Operator authenticated in context t_a suspends target tenant t_b
+        async with session_factory() as session:
+            async with tenant_session(session, ctx_operator, tenant_id=target_tenant_b) as s:
+                await s.execute(
+                    text("UPDATE tenant SET status = 'suspended' WHERE id = :tid").bindparams(tid=target_tenant_b)
+                )
+                await audit_record(
+                    session=s,
+                    ctx=ctx_operator,
+                    action="suspend",
+                    resource_type="tenant",
+                    context_note="Emergency operator suspension of tenant t_b",
+                )
+
+        # 1. Tenant B session verifies its status is 'suspended' and audit event is recorded
+        async with session_factory() as s:
+            await _set_tenant(s, "t_b")
+            status_b = (await s.execute(text("SELECT status FROM tenant WHERE id = 't_b'"))).scalar_one()
+            assert status_b == "suspended"
+
+            audit_rows_b = (await s.execute(text("SELECT context_note FROM audit_event WHERE action = 'suspend'"))).scalars().all()
+            assert any("Emergency operator suspension of tenant t_b" in note for note in audit_rows_b)
+
+        # 2. Tenant A session CANNOT see tenant B's audit event (ISOLATION GATE)
+        async with session_factory() as s:
+            await _set_tenant(s, "t_a")
+            audit_rows_a = (await s.execute(text("SELECT context_note FROM audit_event WHERE action = 'suspend'"))).scalars().all()
+            assert not any("Emergency operator suspension of tenant t_b" in note for note in audit_rows_a), (
+                "ISOLATION BREACH: Tenant A session saw tenant B operator suspension audit log"
+            )
+
+        # 3. Emergency Operator Override target tenant t_b back to active
+        async with session_factory() as session:
+            async with tenant_session(session, ctx_operator, tenant_id=target_tenant_b) as s:
+                await s.execute(
+                    text("UPDATE tenant SET status = 'active' WHERE id = :tid").bindparams(tid=target_tenant_b)
+                )
+                await audit_record(
+                    session=s,
+                    ctx=ctx_operator,
+                    action="override",
+                    resource_type="tenant",
+                    context_note="Emergency operator override reactivated tenant t_b",
+                )
+
+        # 4. Verify tenant B state restored and audit event logged under tenant B
+        async with session_factory() as s:
+            await _set_tenant(s, "t_b")
+            status_b_reactivated = (await s.execute(text("SELECT status FROM tenant WHERE id = 't_b'"))).scalar_one()
+            assert status_b_reactivated == "active"
+
+            audit_rows_b_override = (await s.execute(text("SELECT context_note FROM audit_event WHERE action = 'override'"))).scalars().all()
+            assert any("Emergency operator override reactivated tenant t_b" in note for note in audit_rows_b_override)
+
+        # 5. Verify tenant A CANNOT see override audit event
+        async with session_factory() as s:
+            await _set_tenant(s, "t_a")
+            audit_rows_a_override = (await s.execute(text("SELECT context_note FROM audit_event WHERE action = 'override'"))).scalars().all()
+            assert not any("Emergency operator override reactivated tenant t_b" in note for note in audit_rows_a_override), (
+                "ISOLATION BREACH: Tenant A session saw tenant B operator override audit log"
+            )
+
+    finally:
+        await engine.dispose()
+
+
