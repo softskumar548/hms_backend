@@ -4,7 +4,6 @@ Verifies the complete tenant onboarding lifecycle:
 Provisioning -> Setup Wizard Config -> Legacy Migration Staging -> Clinician Reconciliation ->
 Readiness Engine Evaluation -> Go-Live Transition (Active) -> Bulk FHIR Export.
 """
-from __future__ import annotations
 
 from fastapi.testclient import TestClient
 import pytest
