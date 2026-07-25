@@ -231,7 +231,7 @@ async def ingest_result(
         # --- Referral Loop Closing Integration ---
         patient_row = (
             await s.execute(
-                text("SELECT referred_by_id, referred_by_name FROM patient WHERE id = :pid").bindparams(pid=patient_id)
+                text("SELECT referred_by_id, referred_by_name FROM patient WHERE id = CAST(:pid AS uuid)").bindparams(pid=str(patient_id))
             )
         ).mappings().one_or_none()
 
