@@ -46,6 +46,9 @@ services:
     environment:
       ENV: development
       ALLOW_DEV_TOKENS: "true"
+      OIDC_ISSUER: http://keycloak:8080/realms/hms
+      OIDC_AUDIENCE: hms-web
+      OIDC_JWKS_URI: http://keycloak:8080/realms/hms/protocol/openid-connect/certs
       DATABASE_URL: postgresql+asyncpg://hms_app:${APP_DB_PASSWORD:-app_password_change_me}@postgres:5432/hms
       # Admin-only URL, used by seed/tests to provision tenants (INSERT on `tenant`
       # is not granted to hms_app). Never used by request handlers.
