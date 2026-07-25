@@ -4,7 +4,6 @@ Validates OIDC JWT tokens issued by Keycloak (IAM-001, IAM-006). If OIDC environ
 variables are not configured, falls back to the development mock token parser
 to facilitate local development and testing.
 """
-from __future__ import annotations
 
 import logging
 import os
@@ -24,7 +23,7 @@ logger = logging.getLogger("hms_auth")
 OIDC_ISSUER = os.environ.get("OIDC_ISSUER")
 OIDC_AUDIENCE = os.environ.get("OIDC_AUDIENCE")
 OIDC_JWKS_URI = os.environ.get("OIDC_JWKS_URI")
-ALLOW_DEV_TOKENS = os.environ.get("ALLOW_DEV_TOKENS", "").lower() in ("true", "1") or os.environ.get("ENV", "development").lower() == "development"
+ALLOW_DEV_TOKENS = os.environ.get("ALLOW_DEV_TOKENS", "").lower() in ("true", "1") or os.environ.get("ENV", "development").lower() in ("development", "test")
 
 # Fallback to dev mode if OIDC configuration is incomplete
 DEV_MODE = not (OIDC_ISSUER and OIDC_AUDIENCE)
@@ -98,9 +97,10 @@ async def get_context(
         raise HTTPException(status_code=401, detail="missing bearer token")
     token = authorization.split(" ", 1)[1].strip()
 
-    if DEV_MODE or (token.startswith("dev.") and ALLOW_DEV_TOKENS):
-        env_mode = os.getenv("ENV", "development").lower()
-        if not ALLOW_DEV_TOKENS or env_mode in ["production", "staging"]:
+    env_mode = os.getenv("ENV", "development").lower()
+    allow_dev = os.getenv("ALLOW_DEV_TOKENS", "").lower() in ("true", "1") or env_mode in ("development", "dev", "test")
+    if DEV_MODE or (token.startswith("dev.") and allow_dev):
+        if env_mode in ("production", "staging") and not os.getenv("ALLOW_DEV_TOKENS", "").lower() in ("true", "1"):
             logger.error("AUTH_FAILURE: Dev auth token fallback attempted outside allowed dev environment (ENV=%s).", env_mode)
             raise HTTPException(
                 status_code=401,

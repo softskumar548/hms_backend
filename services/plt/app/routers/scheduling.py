@@ -1,4 +1,3 @@
-from __future__ import annotations
 
 from datetime import date, datetime
 import logging
@@ -271,8 +270,8 @@ async def book_appointment(
 
 @router.get("/appointments", response_model=list[AppointmentOut])
 async def list_appointments(
-    status: Optional[str] = None,
-    patient_id: Optional[UUID] = None,
+    status: str | None = Query(default=None),
+    patient_id: UUID | None = Query(default=None),
     ctx: RequestContext = Depends(auth),
     session: AsyncSession = Depends(get_session)
 ):

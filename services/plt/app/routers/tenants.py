@@ -3,7 +3,6 @@
 Platform Control Center & Operator APIs for tenant lifecycle management,
 setup wizard configuration, staff invitation, and attestation.
 """
-from __future__ import annotations
 
 import json
 from typing import Any

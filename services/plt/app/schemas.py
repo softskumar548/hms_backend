@@ -1,6 +1,5 @@
 """Request/response models. Pydantic v2. These mirror a slice of the FHIR Patient
 resource; the full FHIR mapping lives in the hms_fhir library (flag F2)."""
-from __future__ import annotations
 
 from datetime import date
 import re
@@ -71,7 +70,7 @@ class PatientCreate(BaseModel):
         return v
 
     @model_validator(mode="after")
-    def validate_referred_by(self) -> PatientCreate:
+    def validate_referred_by(self) -> "PatientCreate":
         if self.referred_by_type and not self.referred_by_name:
             raise ValueError("referred_by_name is required if referred_by_type is set")
         if self.referred_by_name and not self.referred_by_type:

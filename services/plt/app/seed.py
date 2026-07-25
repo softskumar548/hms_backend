@@ -19,7 +19,6 @@ SET LOCAL app.tenant_id, so RLS is exercised end-to-end like a real clinical wri
 Deterministic (uuid5 + seeded Random) and idempotent (ON CONFLICT DO NOTHING),
 so re-running is safe and diffable.
 """
-from __future__ import annotations
 
 import asyncio
 import os

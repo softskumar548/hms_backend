@@ -7,7 +7,6 @@ Enforces:
 4. Patient duplicate detection algorithm (REG-003).
 5. Exposing demographics as FHIR resources & emitting patient.updated event (REG-009).
 """
-from __future__ import annotations
 
 import json
 import logging
@@ -15,6 +14,10 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fhir.resources.patient import Patient as FHIRPatient
+try:
+    FHIRPatient.model_rebuild()
+except Exception:
+    pass
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 

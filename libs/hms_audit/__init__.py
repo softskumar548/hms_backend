@@ -4,7 +4,6 @@ Every create/read/update/export of patient-identifiable data must be recorded.
 Events are insert-only; there is no update or delete path by design. Retention
 (default 7 years) is enforced by a scheduled job, not by mutating rows.
 """
-from __future__ import annotations
 
 from datetime import UTC, datetime, timezone
 from typing import Optional

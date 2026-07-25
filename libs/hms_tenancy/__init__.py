@@ -5,7 +5,6 @@ DB session opened for a request MUST go through `tenant_session`, which sets the
 Postgres session variable `app.tenant_id` that the RLS policies read. If you open
 a raw session without it, RLS denies everything — that is intentional.
 """
-from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
