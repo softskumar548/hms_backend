@@ -53,6 +53,10 @@ services:
       # Admin-only URL, used by seed/tests to provision tenants (INSERT on `tenant`
       # is not granted to hms_app). Never used by request handlers.
       SEED_DATABASE_URL: postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:-postgres_change_me}@postgres:5432/hms
+    volumes:
+      - ./services/plt/app:/code/app
+      - ./tests:/code/tests
+      - ./libs:/libs
     depends_on:
       postgres:
         condition: service_healthy
