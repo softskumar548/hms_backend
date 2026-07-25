@@ -134,7 +134,8 @@ CREATE TABLE IF NOT EXISTS appointment (
     end_time        TIMESTAMPTZ NOT NULL DEFAULT now() + interval '30 min',
     referred_by_id   TEXT,
     referred_by_name TEXT,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS encounter (

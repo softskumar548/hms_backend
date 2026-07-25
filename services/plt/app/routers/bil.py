@@ -206,9 +206,37 @@ async def create_invoice(
     return InvoiceDetailOut(**inv_row, items=items)
 
 
+@router.get("/invoices", response_model=list[InvoiceOut])
+async def list_invoices(
+    patient_id: str = Query(None),
+    encounter_id: str = Query(None),
+    status: str = Query(None),
+    ctx: RequestContext = Depends(auth),
+    session: AsyncSession = Depends(get_session)
+):
+    """List invoices filtered by patient_id, encounter_id, or status."""
+    async with tenant_session(session, ctx) as s:
+        query_str = "SELECT id, patient_id, encounter_id, status, coverage_id, total_amount, payer_responsibility, patient_responsibility, created_at, updated_at FROM invoice WHERE 1=1"
+        params = {}
+        if patient_id:
+            query_str += " AND patient_id = :patient_id"
+            params["patient_id"] = str(patient_id)
+        if encounter_id:
+            query_str += " AND encounter_id = :encounter_id"
+            params["encounter_id"] = str(encounter_id)
+        if status:
+            query_str += " AND status = :status"
+            params["status"] = status
+        query_str += " ORDER BY created_at DESC"
+
+        rows = (await s.execute(text(query_str).bindparams(**params))).mappings().all()
+        await s.commit()
+    return [InvoiceOut(**r) for r in rows]
+
+
 @router.post("/invoices/{invoice_id}/lines", response_model=InvoiceDetailOut)
 async def add_invoice_line(
-    invoice_id: UUID,
+    invoice_id: str,
     body: InvoiceLineCreate,
     request: Request,
     ctx: RequestContext = Depends(auth),
@@ -311,7 +339,7 @@ async def add_invoice_line(
 
 @router.post("/invoices/{invoice_id}/finalize", response_model=InvoiceOut)
 async def finalize_invoice(
-    invoice_id: UUID,
+    invoice_id: str,
     request: Request,
     ctx: RequestContext = Depends(auth),
     session: AsyncSession = Depends(get_session)
@@ -376,7 +404,7 @@ async def finalize_invoice(
 
 @router.post("/invoices/{invoice_id}/reverse", response_model=InvoiceOut)
 async def reverse_invoice(
-    invoice_id: UUID,
+    invoice_id: str,
     request: Request,
     ctx: RequestContext = Depends(auth),
     session: AsyncSession = Depends(get_session)
