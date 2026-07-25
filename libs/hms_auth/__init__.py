@@ -98,6 +98,7 @@ async def get_context(
     token = authorization.split(" ", 1)[1].strip()
 
     env_mode = os.getenv("ENV", "development").lower()
+    allow_dev = os.getenv("ALLOW_DEV_TOKENS", "").lower() in ("true", "1") or env_mode in ("development", "dev", "test")
     if token.startswith("dev."):
         if not allow_dev or env_mode in ("production", "staging"):
             logger.error("AUTH_FAILURE: Dev auth token fallback attempted outside allowed dev environment (ENV=%s).", env_mode)
