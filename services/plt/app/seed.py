@@ -132,7 +132,7 @@ async def _seed_tenant(tid: str) -> None:
     today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
 
     async with SessionLocal() as s:  # hms_app role — RLS applies
-        await _exec(s, "SELECT set_config('app.tenant_id', :t, true)", t=tid)
+        await _exec(s, "SELECT set_config('app.tenant_id', :t, false)", t=tid)
 
         # Clear transactional tables for fresh reproducible state
         for tbl in ["appointment_prerequisite", "payment", "invoice_item", "invoice", 

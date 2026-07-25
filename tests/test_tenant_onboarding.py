@@ -71,7 +71,16 @@ def test_end_to_end_tenant_onboarding_journey():
     assert resp.status_code == 200
     readiness_data = resp.json()
     assert readiness_data["ready_for_golive"] is True
-    assert len(readiness_data["checks"]) == 4
+    assert len(readiness_data["checks"]) == 6
+    
+    # Assert each specific code and passed state
+    codes = {c["code"]: c["passed"] for c in readiness_data["checks"]}
+    assert codes["SITES_CONFIGURED"] is True
+    assert codes["ROOMS_CONFIGURED"] is True
+    assert codes["SERVICES_CONFIGURED"] is True
+    assert codes["STAFF_ENROLLED"] is True
+    assert codes["MIGRATION_RECONCILED"] is True
+    assert codes["ATTESTATION_SIGNED"] is True
 
     # 6. Flip tenant state to active Go-Live (TEN-204)
     resp = client.post(f"/tenants/{tenant_id}/go-live", headers=headers)
@@ -85,3 +94,50 @@ def test_end_to_end_tenant_onboarding_journey():
     assert fhir_data["tenant_id"] == tenant_id
     assert fhir_data["fhir_bundle"]["resourceType"] == "Bundle"
     assert fhir_data["patient_count"] >= 2
+    assert "2026-" in fhir_data["exported_at"]  # Dynamic ISO timestamp check
+
+
+def test_readiness_checklist_individual_check_gating_behavior():
+    headers = {"Authorization": "Bearer dev.apollo.operator"}
+
+    # Case A: Fresh provisioned tenant (zero staff, zero sites, un-reconciled)
+    fresh_tid = f"test_hosp_{uuid.uuid4().hex[:6]}"
+    client.post("/tenants", json={
+        "id": fresh_tid,
+        "name": "Test Hospital N3",
+        "region": "india",
+        "locale": "en-IN",
+        "currency": "INR",
+        "features": {"ref_commission": False}
+    }, headers=headers)
+
+    resp = client.get(f"/tenants/{fresh_tid}/readiness", headers=headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["ready_for_golive"] is False
+
+    check_map = {c["code"]: c for c in data["checks"]}
+    assert check_map["STAFF_ENROLLED"]["passed"] is False
+    assert check_map["STAFF_ENROLLED"]["details"] == "0 practitioner(s) & staff profile(s) enrolled"
+    assert check_map["SITES_CONFIGURED"]["passed"] is False
+    assert check_map["ATTESTATION_SIGNED"]["passed"] is True  # standard terms default
+
+    # Case B: Commission-enabled tenant without counsel attestation -> ATTESTATION_SIGNED blocked
+    comm_tid = f"test_comm_{uuid.uuid4().hex[:6]}"
+    client.post("/tenants", json={
+        "id": comm_tid,
+        "name": "Commission Test Clinic",
+        "region": "india",
+        "locale": "en-IN",
+        "currency": "INR",
+        "features": {"ref_commission": True, "ref_commission_attested": False}
+    }, headers=headers)
+
+    resp_comm = client.get(f"/tenants/{comm_tid}/readiness", headers=headers)
+    assert resp_comm.status_code == 200
+    comm_data = resp_comm.json()
+    assert comm_data["ready_for_golive"] is False
+    comm_attest_check = next(c for c in comm_data["checks"] if c["code"] == "ATTESTATION_SIGNED")
+    assert comm_attest_check["passed"] is False
+    assert "BLOCKED" in comm_attest_check["details"]
+

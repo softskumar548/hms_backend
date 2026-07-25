@@ -1,10 +1,3 @@
-"""OPERATIONAL CONTROL & BILLING/CLAIMS TEST SUITE (TEN-301 .. TEN-305 / Gate N5-X1).
-
-Verifies multi-tenant usage metrics, SaaS subscription invoicing, Aarogyasri cashless pre-auth,
-tenant suspension on billing default, and operator emergency override.
-"""
-from __future__ import annotations
-
 from fastapi.testclient import TestClient
 import pytest
 
@@ -79,8 +72,14 @@ def test_tenant_suspension_and_emergency_override():
     assert resp.status_code == 200
     assert resp.json()["status"] == "suspended"
 
-    # 3. Emergency override (TEN-305)
+    # 3. Non-operator attempt is blocked with 403 Forbidden
+    phys_headers = {"Authorization": "Bearer dev.apollo.physician"}
+    resp_blocked = client.post(f"/tenants/{tenant_id}/override", json={"override_note": "Unauth"}, headers=phys_headers)
+    assert resp_blocked.status_code == 403
+
+    # 4. Emergency override (TEN-305) by operator reinstates active status
     override_payload = {"override_note": "Payment arrangement confirmed by operator"}
     resp = client.post(f"/tenants/{tenant_id}/override", json=override_payload, headers=headers)
     assert resp.status_code == 200
     assert resp.json()["status"] == "active"
+

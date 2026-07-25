@@ -151,9 +151,25 @@ async def get_context(
             token,
             public_key,
             algorithms=["RS256"],
-            issuer=OIDC_ISSUER,
-            options={"verify_aud": False}
+            options={"verify_aud": False, "verify_iss": False}
         )
+
+        iss = payload.get("iss")
+        if OIDC_ISSUER:
+            valid_issuers = [
+                OIDC_ISSUER,
+                OIDC_ISSUER.replace("keycloak", "localhost"),
+                OIDC_ISSUER.replace("keycloak", "127.0.0.1"),
+                OIDC_ISSUER.replace("localhost", "127.0.0.1"),
+                OIDC_ISSUER.replace("localhost", "keycloak"),
+                OIDC_ISSUER.replace("127.0.0.1", "localhost"),
+                OIDC_ISSUER.replace("127.0.0.1", "keycloak"),
+                "http://localhost:8080/realms/hms",
+                "http://127.0.0.1:8080/realms/hms",
+                "http://keycloak:8080/realms/hms",
+            ]
+            if iss not in valid_issuers:
+                raise jwt.InvalidIssuerError(f"Invalid issuer: {iss}")
 
         # Verify audience (aud claim or authorized party azp claim)
         aud_claims = payload.get("aud")

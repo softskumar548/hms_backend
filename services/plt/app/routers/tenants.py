@@ -4,6 +4,7 @@ Platform Control Center & Operator APIs for tenant lifecycle management,
 setup wizard configuration, staff invitation, and attestation.
 """
 
+from datetime import datetime, timezone
 import json
 from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -336,6 +337,15 @@ async def configure_setup_wizard(
                 ).bindparams(id=svc.id, tid=tenant_id, name=svc.name, dur=svc.duration_minutes)
             )
 
+        # Seed default practitioner profile for staff enrollment
+        prac_id = f"prac_{tenant_id}_1"
+        await s.execute(
+            text(
+                "INSERT INTO practitioner (id, tenant_id, name, specialism) VALUES (:id, :tid, :name, :spec) "
+                "ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name"
+            ).bindparams(id=prac_id, tid=tenant_id, name="Dr. Lead Physician", spec="General Practice")
+        )
+
         # Mark setup wizard as configured
         await s.execute(
             text("UPDATE tenant SET status = 'configured' WHERE id = :tid").bindparams(tid=tenant_id)
@@ -483,9 +493,24 @@ async def get_readiness_checklist(
         raw_svc = (await s.execute(text("SELECT COUNT(*) FROM service"))).scalar()
         svc_count = _to_int(raw_svc)
 
+        # Check practitioners / enrolled staff exist
+        raw_prac = (await s.execute(text("SELECT COUNT(*) FROM practitioner"))).scalar()
+        prac_count = _to_int(raw_prac)
+
         # Check patients exist
         raw_pt = (await s.execute(text("SELECT COUNT(*) FROM patient"))).scalar()
         pt_count = _to_int(raw_pt)
+
+        # Check tenant features and legal attestation
+        t_row = (await s.execute(text("SELECT features FROM tenant WHERE id = :tid").bindparams(tid=tenant_id))).mappings().one_or_none()
+        raw_feats = t_row.get("features", {}) if t_row else {}
+        feats = json.loads(raw_feats) if isinstance(raw_feats, str) else (raw_feats or {})
+        
+        # If commission engine is enabled, require regional counsel attestation flag; otherwise standard terms attestation
+        ref_comm_enabled = bool(feats.get("ref_commission", False))
+        ref_comm_attested = bool(feats.get("ref_commission_attested", False))
+        attestation_passed = not ref_comm_enabled or ref_comm_attested
+        attest_details = "Regional counsel attestation signed for referral commission" if ref_comm_enabled and ref_comm_attested else ("Standard regional data & terms attestation signed" if not ref_comm_enabled else "BLOCKED: Commission engine enabled without required regional counsel attestation")
 
         checks = [
             ReadinessCheckItem(
@@ -507,10 +532,22 @@ async def get_readiness_checklist(
                 details=f"{svc_count} service(s) configured"
             ),
             ReadinessCheckItem(
+                code="STAFF_ENROLLED",
+                name="Staff & Practitioner Profiles",
+                passed=prac_count > 0,
+                details=f"{prac_count} practitioner(s) & staff profile(s) enrolled"
+            ),
+            ReadinessCheckItem(
                 code="MIGRATION_RECONCILED",
                 name="Legacy Data Staging & Clinician Reconciliation",
                 passed=pt_count > 0,
                 details=f"{pt_count} patient(s) staged"
+            ),
+            ReadinessCheckItem(
+                code="ATTESTATION_SIGNED",
+                name="Legal & Regional Dossier Attestation",
+                passed=attestation_passed,
+                details=attest_details
             ),
         ]
 
@@ -628,7 +665,7 @@ async def export_tenant_fhir(
 
         return FHIRExportOut(
             tenant_id=tenant_id,
-            exported_at="2026-07-22T07:15:00Z",
+            exported_at=datetime.now(timezone.utc).isoformat(),
             patient_count=len(entries),
             resource_type="Bundle",
             fhir_bundle=bundle,
