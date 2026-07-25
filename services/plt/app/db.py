@@ -3,7 +3,6 @@
 The app connects as the non-superuser role `hms_app` so Row-Level Security is
 enforced (superusers bypass RLS). Connection string comes from DATABASE_URL.
 """
-from __future__ import annotations
 
 import os
 import logging

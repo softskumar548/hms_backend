@@ -8,7 +8,6 @@ Sprint-1 ships the interface plus a `NoopPublisher` for dev/tests so calling
 code compiles and runs end-to-end. The transactional-outbox implementation
 (`OutboxPublisher`) lands with the first real cross-service event.
 """
-from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field

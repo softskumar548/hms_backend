@@ -1,5 +1,4 @@
 """Pydantic schemas for Tenant Management & Onboarding (TEN-101 .. TEN-108)."""
-from __future__ import annotations
 
 from datetime import datetime
 from typing import Any, Literal

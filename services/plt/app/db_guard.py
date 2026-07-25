@@ -4,7 +4,6 @@ Purpose: the app must REFUSE to serve if the real database, RLS, or the
 non-superuser role are not in place. This permanently closes the
 MockAsyncSession class of failure (silent degradation to no-isolation).
 """
-from __future__ import annotations
 
 import logging
 import os

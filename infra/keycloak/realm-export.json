@@ -56,8 +56,9 @@
       "publicClient": true,
       "directAccessGrantsEnabled": true,
       "standardFlowEnabled": true,
-      "implicitFlowEnabled": false,
-      "pkceCodeChallengeMethod": "S256",
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
       "redirectUris": [
         "http://localhost:5173/*",
         "http://localhost:8000/*",

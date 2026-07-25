@@ -4,7 +4,6 @@ Foundation service: platform/tenancy plus a demo patients module that shows the
 tenant-isolation + audit pattern every clinical module must follow. Auto-generates
 the OpenAPI spec (INT-007) at /docs and /openapi.json.
 """
-from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request

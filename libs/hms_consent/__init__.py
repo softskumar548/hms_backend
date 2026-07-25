@@ -13,7 +13,6 @@ The purpose taxonomy (e.g. "share:abdm", "comms:appointment_reminder",
 that must be signed off before enabling any purpose in production. This module
 only mechanically enforces whatever the caller passes.
 """
-from __future__ import annotations
 
 from hms_tenancy import RequestContext
 from sqlalchemy import text

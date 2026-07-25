@@ -1,4 +1,3 @@
-from __future__ import annotations
 
 from datetime import date, datetime
 import logging
@@ -27,7 +26,7 @@ router = APIRouter(prefix="/rpt", tags=["rpt"])
 
 @router.get("/dashboards/operational", response_model=OperationalDashboardOut)
 async def get_operational_dashboard(
-    site_id: Optional[str] = None,
+    site_id: str | None = Query(default=None),
     ctx: RequestContext = Depends(auth),
     session: AsyncSession = Depends(get_session)
 ):
@@ -75,7 +74,7 @@ async def get_operational_dashboard(
 async def get_visits_report(
     start_date: date = Query(...),
     end_date: date = Query(...),
-    site_id: Optional[str] = None,
+    site_id: str | None = Query(default=None),
     ctx: RequestContext = Depends(auth),
     session: AsyncSession = Depends(get_session)
 ):

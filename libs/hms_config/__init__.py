@@ -12,7 +12,6 @@ Example:
 Absent / unset flags return the caller-supplied `default`, defaulting to False
 (fail closed for licensable capabilities).
 """
-from __future__ import annotations
 
 from typing import Any
 

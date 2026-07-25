@@ -44,7 +44,8 @@ services:
       context: .
       dockerfile: services/plt/Dockerfile
     environment:
-      # App connections use the least-privilege hms_app role so RLS applies.
+      ENV: development
+      ALLOW_DEV_TOKENS: "true"
       DATABASE_URL: postgresql+asyncpg://hms_app:${APP_DB_PASSWORD:-app_password_change_me}@postgres:5432/hms
       # Admin-only URL, used by seed/tests to provision tenants (INSERT on `tenant`
       # is not granted to hms_app). Never used by request handlers.
