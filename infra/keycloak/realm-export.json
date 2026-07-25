@@ -1,0 +1,158 @@
+{
+  "realm": "hms",
+  "enabled": true,
+  "displayName": "HMS SaaS Platform",
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": true,
+  "permanentLockout": false,
+  "maxFailureWaitSeconds": 900,
+  "minimumQuickLoginWaitSeconds": 60,
+  "waitIncrementSeconds": 60,
+  "quickLoginCheckMilliSeconds": 1000,
+  "maxDeltaTimeSeconds": 43200,
+  "failureFactor": 5,
+  "roles": {
+    "realm": [
+      {
+        "name": "doctor",
+        "description": "Clinician / Doctor role"
+      },
+      {
+        "name": "nurse",
+        "description": "Nursing staff role"
+      },
+      {
+        "name": "receptionist",
+        "description": "Front desk / Scheduling role"
+      },
+      {
+        "name": "biller",
+        "description": "Billing / Invoicing role"
+      },
+      {
+        "name": "admin",
+        "description": "Hospital Tenant Administrator role"
+      },
+      {
+        "name": "operator",
+        "description": "Platform Operator role"
+      },
+      {
+        "name": "referrer",
+        "description": "External Referrer role"
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "hms-web",
+      "name": "HMS Web Client (SPA)",
+      "enabled": true,
+      "publicClient": true,
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "pkceCodeChallengeMethod": "S256",
+      "redirectUris": [
+        "http://localhost:5173/*",
+        "http://localhost:8000/*",
+        "http://localhost/*",
+        "https://staging.hms.zensynq.com/*"
+      ],
+      "webOrigins": [
+        "*"
+      ],
+      "protocol": "openid-connect",
+      "protocolMappers": [
+        {
+          "name": "tenant_id",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "tenant_id",
+            "claim.name": "app.tenant_id",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "realm roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-realm-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "roles",
+            "jsonType.label": "String",
+            "multivalued": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "hms-api",
+      "name": "HMS Backend API",
+      "enabled": true,
+      "bearerOnly": true,
+      "protocol": "openid-connect"
+    }
+  ],
+  "users": [
+    {
+      "username": "dr.smith@apollo.com",
+      "enabled": true,
+      "email": "dr.smith@apollo.com",
+      "firstName": "John",
+      "lastName": "Smith",
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Password123!",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "doctor"
+      ],
+      "attributes": {
+        "tenant_id": [
+          "apollo"
+        ]
+      }
+    },
+    {
+      "username": "operator@zensynq.com",
+      "enabled": true,
+      "email": "operator@zensynq.com",
+      "firstName": "Platform",
+      "lastName": "Operator",
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Password123!",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "operator"
+      ],
+      "attributes": {
+        "tenant_id": [
+          "apollo"
+        ]
+      }
+    }
+  ]
+}
