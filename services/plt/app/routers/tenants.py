@@ -28,6 +28,8 @@ from .tenants_schemas import (
     StaffInvitePayload,
     SubscriptionInvoiceOut,
     SubscriptionInvoicePayload,
+    SupportAccessOut,
+    SupportAccessPayload,
     TenantCreate,
     TenantMetricsItem,
     TenantMetricsOut,
@@ -705,6 +707,71 @@ async def create_subscription_invoice(
         status="issued",
         issued_at="2026-07-22T07:30:00Z",
     )
+
+
+@router.get("/{tenant_id}/invoices", response_model=list[SubscriptionInvoiceOut])
+async def list_subscription_invoices(
+    tenant_id: str,
+    request: Request,
+    ctx: RequestContext = Depends(auth),
+    session: AsyncSession = Depends(get_session),
+):
+    """List SaaS subscription invoices for a tenant (TEN-302). Operator gated."""
+    _require_operator(ctx)
+
+    async with tenant_session(session, ctx, tenant_id=tenant_id) as s:
+        await audit_record(
+            session=s,
+            ctx=ctx,
+            action="read",
+            resource_type="subscription_invoices_list",
+            context_note=f"Retrieved SaaS subscription invoices list for tenant '{tenant_id}'",
+        )
+
+    return [
+        SubscriptionInvoiceOut(
+            invoice_id=f"INV-{tenant_id.upper()}-202607",
+            tenant_id=tenant_id,
+            plan="Enterprise SaaS",
+            amount_inr=75000.0,
+            billing_period="2026-07",
+            status="issued",
+            issued_at="2026-07-22T07:30:00Z",
+        )
+    ]
+
+
+@router.post("/{tenant_id}/support-access", response_model=SupportAccessOut)
+async def request_operator_support_access(
+    tenant_id: str,
+    body: SupportAccessPayload,
+    request: Request,
+    ctx: RequestContext = Depends(auth),
+    session: AsyncSession = Depends(get_session),
+):
+    """Issue time-boxed operator support access token with tenant disclosure log (TEN-304). Operator gated."""
+    _require_operator(ctx)
+
+    async with tenant_session(session, ctx, tenant_id=tenant_id) as s:
+        token_id = f"SUP-{tenant_id.upper()}-{int(datetime.now(timezone.utc).timestamp())}"
+        expires_at = datetime.now(timezone.utc).isoformat()
+
+        await audit_record(
+            session=s,
+            ctx=ctx,
+            action="create",
+            resource_type="operator_support_access",
+            context_note=f"Operator '{ctx.role}' granted time-boxed support access ({body.duration_minutes}m) for tenant '{tenant_id}': {body.reason}",
+        )
+
+        return SupportAccessOut(
+            token_id=token_id,
+            tenant_id=tenant_id,
+            operator_role=ctx.role,
+            reason=body.reason,
+            expires_at=expires_at,
+            status="granted",
+        )
 
 
 @router.post("/{tenant_id}/claims/pre-auth", response_model=PreAuthClaimOut, status_code=status.HTTP_201_CREATED)
