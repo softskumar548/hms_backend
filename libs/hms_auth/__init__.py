@@ -6,6 +6,7 @@ to facilitate local development and testing.
 """
 from __future__ import annotations
 
+import logging
 import os
 import time
 from typing import Any
@@ -17,10 +18,13 @@ from hms_tenancy import RequestContext, current_tenant_id
 from jwt import PyJWK
 from jwt.exceptions import ExpiredSignatureError, InvalidSignatureError, InvalidTokenError
 
+logger = logging.getLogger("hms_auth")
+
 # Load settings from environment variables
 OIDC_ISSUER = os.environ.get("OIDC_ISSUER")
 OIDC_AUDIENCE = os.environ.get("OIDC_AUDIENCE")
 OIDC_JWKS_URI = os.environ.get("OIDC_JWKS_URI")
+ALLOW_DEV_TOKENS = os.environ.get("ALLOW_DEV_TOKENS", "").lower() in ("true", "1") or os.environ.get("ENV", "development").lower() == "development"
 
 # Fallback to dev mode if OIDC configuration is incomplete
 DEV_MODE = not (OIDC_ISSUER and OIDC_AUDIENCE)
@@ -94,21 +98,24 @@ async def get_context(
         raise HTTPException(status_code=401, detail="missing bearer token")
     token = authorization.split(" ", 1)[1].strip()
 
-    env_mode = os.getenv("ENV", "development").lower()
-    if DEV_MODE:
-        if env_mode in ["production", "staging"]:
-            logger.error("FATAL: Dev auth token fallback ('dev.<tenant>.<role>') attempted in production/staging.")
+    if DEV_MODE or (token.startswith("dev.") and ALLOW_DEV_TOKENS):
+        env_mode = os.getenv("ENV", "development").lower()
+        if not ALLOW_DEV_TOKENS or env_mode in ["production", "staging"]:
+            logger.error("AUTH_FAILURE: Dev auth token fallback attempted outside allowed dev environment (ENV=%s).", env_mode)
             raise HTTPException(
-                status_code=500,
-                detail="FATAL: Dev auth token fallback ('dev.<tenant>.<role>') is forbidden in production/staging. Configure OIDC_ISSUER and OIDC_AUDIENCE."
+                status_code=401,
+                detail="AUTH_FAILURE: Dev auth tokens forbidden in this environment. Real OIDC token required."
             )
         # DEV/TEST ONLY: `dev.<tenant>.<role>`
         parts = token.split(".")
         if len(parts) != 3 or parts[0] != "dev":
+            logger.warning("AUTH_FAILURE: Invalid dev token structure: %s", token)
             raise HTTPException(status_code=401, detail="invalid dev token")
         _, tenant_id, role = parts
         if role not in _DEV_ROLES:
+            logger.warning("AUTH_FAILURE: Dev token contains unauthorized role '%s'", role)
             raise HTTPException(status_code=403, detail=f"unknown role '{role}'")
+        current_tenant_id.set(tenant_id)
         return RequestContext(
             tenant_id=tenant_id,
             user_id=f"{role}@{tenant_id}",
@@ -121,6 +128,7 @@ async def get_context(
         unverified_header = jwt.get_unverified_header(token)
         kid = unverified_header.get("kid")
         if not kid:
+            logger.warning("AUTH_FAILURE: Bearer token missing 'kid' in header.")
             raise HTTPException(status_code=401, detail="missing key id (kid) in token header")
 
         keys = await get_jwks_keys()
@@ -131,6 +139,7 @@ async def get_context(
             _jwks_cache["expires_at"] = 0.0
             keys = await get_jwks_keys()
             if kid not in keys:
+                logger.warning("AUTH_FAILURE: Unknown key ID (kid=%s) in token.", kid)
                 raise HTTPException(status_code=401, detail="unknown key id (kid) in token")
 
         # Convert JWK to public key
@@ -146,14 +155,17 @@ async def get_context(
             issuer=OIDC_ISSUER,
         )
     except ExpiredSignatureError:
+        logger.warning("AUTH_FAILURE: Bearer token expired.")
         raise HTTPException(status_code=401, detail="token signature has expired")
     except (InvalidSignatureError, InvalidTokenError) as e:
+        logger.warning("AUTH_FAILURE: Invalid token signature or claims: %s", e)
         raise HTTPException(status_code=401, detail=f"invalid token signature or claims: {e!s}")
     except Exception as e:
+        logger.warning("AUTH_FAILURE: Token validation failed: %s", e)
         raise HTTPException(status_code=401, detail=f"token validation failed: {e!s}")
 
-    # Extract tenant identification from claims
-    tenant_id = payload.get("tenant_id") or payload.get("tenant")
+    # Extract tenant identification from claims (supports standard, custom, or app.tenant_id)
+    tenant_id = payload.get("app.tenant_id") or payload.get("tenant_id") or payload.get("tenant")
     if not tenant_id:
         raise HTTPException(status_code=401, detail="missing tenant identifier claim in token")
 
