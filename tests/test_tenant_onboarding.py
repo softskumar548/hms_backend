@@ -96,6 +96,9 @@ def test_end_to_end_tenant_onboarding_journey():
     assert fhir_data["patient_count"] >= 2
     assert "2026-" in fhir_data["exported_at"]  # Dynamic ISO timestamp check
 
+    # Teardown test tenant
+    client.delete(f"/tenants/{tenant_id}", headers=headers)
+
 
 def test_readiness_checklist_individual_check_gating_behavior():
     headers = {"Authorization": "Bearer dev.apollo.operator"}
@@ -140,4 +143,8 @@ def test_readiness_checklist_individual_check_gating_behavior():
     comm_attest_check = next(c for c in comm_data["checks"] if c["code"] == "ATTESTATION_SIGNED")
     assert comm_attest_check["passed"] is False
     assert "BLOCKED" in comm_attest_check["details"]
+
+    # Teardown test tenants so no debris remains
+    client.delete(f"/tenants/{fresh_tid}", headers=headers)
+    client.delete(f"/tenants/{comm_tid}", headers=headers)
 

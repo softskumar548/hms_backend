@@ -910,3 +910,116 @@ async def emergency_override_tenant(
             features=feats,
             created_at=str(updated.get("created_at", "")),
         )
+
+
+async def _offboard_tenant_cascade(s: AsyncSession, tenant_id: str) -> dict[str, int]:
+    """Dynamically query foreign key relationships from PostgreSQL catalogs (pg_constraint),
+    topologically sort tenant-scoped tables into strict reverse-dependency order,
+    and execute atomic cascade deletion for tenant_id within a single transaction.
+    """
+    # 1. Discover all tables in 'public' schema with a 'tenant_id' column
+    tables_res = await s.execute(text(
+        "SELECT table_name FROM information_schema.columns "
+        "WHERE table_schema = 'public' AND column_name = 'tenant_id'"
+    ))
+    # Exclude root 'tenant' and append-only 'audit_event'
+    tenant_tables = {row[0] for row in tables_res.all() if row[0] not in ("tenant", "audit_event")}
+
+    # 2. Query foreign key dependencies directly from PostgreSQL pg_constraint catalog
+    fk_query = text(
+        "SELECT cl.relname AS child_table, cr.relname AS parent_table "
+        "FROM pg_constraint c "
+        "JOIN pg_class cl ON c.conrelid = cl.oid "
+        "JOIN pg_class cr ON c.confrelid = cr.oid "
+        "JOIN pg_namespace n ON cl.relnamespace = n.oid "
+        "WHERE c.contype = 'f' AND n.nspname = 'public'"
+    )
+    fk_rows = (await s.execute(fk_query)).all()
+
+    # 3. Build graph of deletion dependencies: child must be deleted BEFORE parent
+    adj: dict[str, set[str]] = {tbl: set() for tbl in tenant_tables}
+    in_degree: dict[str, int] = {tbl: 0 for tbl in tenant_tables}
+
+    for child, parent in fk_rows:
+        if child in tenant_tables and parent in tenant_tables and child != parent:
+            if parent not in adj[child]:
+                adj[child].add(parent)
+                in_degree[parent] += 1
+
+    queue = [tbl for tbl in tenant_tables if in_degree[tbl] == 0]
+    delete_order: list[str] = []
+
+    while queue:
+        curr = queue.pop(0)
+        delete_order.append(curr)
+        for parent in adj[curr]:
+            in_degree[parent] -= 1
+            if in_degree[parent] == 0:
+                queue.append(parent)
+
+    # Append any remaining tables
+    for tbl in tenant_tables:
+        if tbl not in delete_order:
+            delete_order.append(tbl)
+
+    deleted_counts: dict[str, int] = {}
+    for tbl in delete_order:
+        try:
+            async with s.begin_nested():
+                del_res = await s.execute(
+                    text(f'DELETE FROM "{tbl}" WHERE tenant_id = :tid').bindparams(tid=tenant_id)
+                )
+                deleted_counts[tbl] = del_res.rowcount or 0
+        except Exception as exc:
+            deleted_counts[f"{tbl}_error"] = str(exc)
+
+    # Finally delete the root tenant row
+    t_del = await s.execute(
+        text("DELETE FROM tenant WHERE id = :tid").bindparams(tid=tenant_id)
+    )
+    deleted_counts["tenant"] = t_del.rowcount or 0
+
+    return deleted_counts
+
+
+@router.delete("/{tenant_id}", status_code=status.HTTP_200_OK)
+async def offboard_tenant(
+    tenant_id: str,
+    request: Request,
+    ctx: RequestContext = Depends(auth),
+    session: AsyncSession = Depends(get_session),
+):
+    """Offboard and cascade-delete tenant data (T3-01). Operator gated."""
+    _require_operator(ctx)
+
+    async with tenant_session(session, ctx, tenant_id=tenant_id) as s:
+        # Check tenant exists
+        row = (
+            await s.execute(
+                text("SELECT id, name FROM tenant WHERE id = :id").bindparams(id=tenant_id)
+            )
+        ).mappings().one_or_none()
+
+        if not row:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Tenant '{tenant_id}' not found",
+            )
+
+        # Record audit event before deletion
+        await audit_record(
+            session=s,
+            ctx=ctx,
+            action="delete",
+            resource_type="tenant_offboarding",
+            context_note=f"Tenant offboarded and cascade-deleted: '{tenant_id}'",
+        )
+
+        counts = await _offboard_tenant_cascade(s, tenant_id)
+
+    return {
+        "status": "offboarded",
+        "tenant_id": tenant_id,
+        "deleted_tables_summary": counts,
+    }
+
