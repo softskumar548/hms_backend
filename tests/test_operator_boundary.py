@@ -63,6 +63,9 @@ def test_operator_can_provision_and_manage_tenant():
     assert resp.status_code == 201
     assert resp.json()["status"] == "invited"
 
+    # 6. Teardown: offboard test tenant so no debris remains
+    client.delete(f"/tenants/{tenant_id}", headers=headers)
+
 
 @pytest.mark.parametrize("role", ["physician", "receptionist", "nurse", "billing_clerk"])
 def test_tenant_roles_blocked_from_operator_endpoints(role: str):
@@ -88,3 +91,30 @@ def test_tenant_roles_blocked_from_operator_endpoints(role: str):
     # 5. Staff invite blocked
     resp = client.post("/tenants/apollo/invitations", json={"email": "a@b.com", "role": "physician", "given_name": "A", "family_name": "B"}, headers=headers)
     assert resp.status_code == 403
+
+    # 6. Offboard attempt blocked
+    resp = client.delete("/tenants/apollo", headers=headers)
+    assert resp.status_code == 403
+
+
+def test_operator_can_offboard_tenant_cascade():
+    """T3-01: Operator can provision and then atomically offboard/cascade-delete a tenant."""
+    headers = {"Authorization": "Bearer dev.apollo.operator"}
+    tenant_id = f"test_offboard_{uuid.uuid4().hex[:6]}"
+
+    # Provision
+    resp = client.post("/tenants", json={"id": tenant_id, "name": "Temp Hospital to Delete"}, headers=headers)
+    assert resp.status_code == 201
+
+    # Offboard (DELETE)
+    del_resp = client.delete(f"/tenants/{tenant_id}", headers=headers)
+    assert del_resp.status_code == 200
+    res_data = del_resp.json()
+    assert res_data["status"] == "offboarded"
+    assert res_data["tenant_id"] == tenant_id
+    assert "deleted_tables_summary" in res_data
+
+    # Verify 404 on fetch
+    get_resp = client.get(f"/tenants/{tenant_id}", headers=headers)
+    assert get_resp.status_code == 404
+

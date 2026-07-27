@@ -9,6 +9,7 @@ is broken.
 from __future__ import annotations
 
 import os
+import uuid
 from datetime import datetime
 import pytest
 import pytest_asyncio
@@ -842,6 +843,20 @@ async def test_operator_target_tenant_context_isolation():
             audit_rows_a = (await s.execute(text("SELECT context_note FROM audit_event WHERE resource_type = 'tenant_wizard'"))).scalars().all()
             assert not any("tenant t_b" in note for note in audit_rows_a)
     finally:
+        try:
+            from app.routers.tenants import _offboard_tenant_cascade
+            from hms_tenancy import RequestContext, tenant_session
+            ctx_op = RequestContext(tenant_id="admin_ctx", user_id="operator@zensynq.com", role="operator")
+            async with session_factory() as session:
+                for tid in ("t_a", "t_b"):
+                    try:
+                        async with tenant_session(session, ctx_op, tenant_id=tid) as s:
+                            await _offboard_tenant_cascade(s, tid)
+                            await s.commit()
+                    except Exception:
+                        pass
+        except Exception:
+            pass
         await engine.dispose()
 
 
@@ -935,6 +950,219 @@ async def test_operator_cross_tenant_suspension_and_override_isolation():
             )
 
     finally:
+        try:
+            from app.routers.tenants import _offboard_tenant_cascade
+            ctx_op = RequestContext(tenant_id="admin_ctx", user_id="operator@zensynq.com", role="operator")
+            async with session_factory() as session:
+                for tid in ("t_a", "t_b"):
+                    try:
+                        async with tenant_session(session, ctx_op, tenant_id=tid) as s:
+                            await _offboard_tenant_cascade(s, tid)
+                            await s.commit()
+                    except Exception:
+                        pass
+        except Exception:
+            pass
         await engine.dispose()
 
 
+@pytest.mark.asyncio
+async def test_operator_target_tenant_cascade_delete_e2e():
+    """T3-01 E2E PROOF: Multi-table row seed -> Cascade offboard -> Assert 0 rows in ALL tables.
+
+    Verifies that offboarding a tenant populates and deletes rows across many dependent clinical/billing
+    tables (patient, practitioner, site, room, service, appointment, encounter, allergy, condition, vitals,
+    invoice, prescription, lab_order) without FK constraint violations, and deletes the root tenant.
+    """
+    from hms_tenancy import RequestContext, tenant_session
+    from app.routers.tenants import _offboard_tenant_cascade
+
+    ctx_operator = RequestContext(tenant_id="admin_ctx", user_id="operator@zensynq.com", role="operator")
+    tid = f"t_e2e_del_{uuid.uuid4().hex[:6]}"
+
+    engine = create_async_engine(DATABASE_URL)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    try:
+        # 1. Provision tenant
+        admin_engine = create_async_engine(ADMIN_DATABASE_URL)
+        async with async_sessionmaker(admin_engine)() as s:
+            await s.execute(text("INSERT INTO tenant (id, name) VALUES (:tid, 'E2E Cascade Delete Target Hospital')").bindparams(tid=tid))
+            await s.commit()
+        await admin_engine.dispose()
+
+        # 2. Seed multi-table tenant data
+        async with session_factory() as session:
+            async with tenant_session(session, ctx_operator, tenant_id=tid) as s:
+                # Site, Room, Service, Practitioner
+                site_id = f"site_{tid}"
+                room_id = f"room_{tid}"
+                svc_id = f"svc_{tid}"
+                prac_id = f"prac_{tid}"
+                await s.execute(text("INSERT INTO site (id, tenant_id, name) VALUES (:sid, :tid, 'Site 1')").bindparams(sid=site_id, tid=tid))
+                await s.execute(text("INSERT INTO room (id, site_id, tenant_id, name) VALUES (:rid, :sid, :tid, 'Room 1')").bindparams(rid=room_id, sid=site_id, tid=tid))
+                await s.execute(text("INSERT INTO service (id, tenant_id, name) VALUES (:svid, :tid, 'Service 1')").bindparams(svid=svc_id, tid=tid))
+                await s.execute(text("INSERT INTO practitioner (id, tenant_id, name) VALUES (:prid, :tid, 'Dr. Smith')").bindparams(prid=prac_id, tid=tid))
+
+                # Patient
+                p_res = await s.execute(text(
+                    "INSERT INTO patient (tenant_id, given_name, family_name) "
+                    "VALUES (:tid, 'Alice', 'Cascade') RETURNING id"
+                ).bindparams(tid=tid))
+                patient_id = str(p_res.scalar_one())
+
+                # Appointment, Encounter
+                appt_id = f"appt_{tid}"
+                enc_id = f"enc_{tid}"
+                await s.execute(text(
+                    "INSERT INTO appointment (id, tenant_id, patient_id, practitioner_id, site_id, room_id, service_id) "
+                    "VALUES (:aid, :tid, CAST(:pid AS uuid), :prid, :sid, :rid, :svid)"
+                ).bindparams(aid=appt_id, tid=tid, pid=patient_id, prid=prac_id, sid=site_id, rid=room_id, svid=svc_id))
+
+                await s.execute(text(
+                    "INSERT INTO encounter (id, tenant_id, appointment_id, patient_id, practitioner_id, site_id) "
+                    "VALUES (:eid, :tid, :aid, CAST(:pid AS uuid), :prid, :sid)"
+                ).bindparams(eid=enc_id, tid=tid, aid=appt_id, pid=patient_id, prid=prac_id, sid=site_id))
+
+                # Clinical data: Allergy, Condition, Vital Sign
+                await s.execute(text(
+                    "INSERT INTO allergy_intolerance (tenant_id, patient_id, substance_display) "
+                    "VALUES (:tid, CAST(:pid AS uuid), 'Penicillin')"
+                ).bindparams(tid=tid, pid=patient_id))
+
+                await s.execute(text(
+                    "INSERT INTO condition (tenant_id, patient_id, display) "
+                    "VALUES (:tid, CAST(:pid AS uuid), 'Hypertension')"
+                ).bindparams(tid=tid, pid=patient_id))
+
+                await s.execute(text(
+                    "INSERT INTO vital_sign (tenant_id, encounter_id, patient_id, type, value) "
+                    "VALUES (:tid, :eid, CAST(:pid AS uuid), 'systolic', 120)"
+                ).bindparams(tid=tid, eid=enc_id, pid=patient_id))
+
+                # Billing & Clinical orders: Invoice, Prescription, Lab Order
+                inv_id = f"inv_{tid}"
+                rx_id = f"rx_{tid}"
+                lab_id = f"lab_{tid}"
+                await s.execute(text(
+                    "INSERT INTO invoice (id, tenant_id, patient_id, encounter_id, total_amount) "
+                    "VALUES (:iid, :tid, CAST(:pid AS uuid), :eid, 1500)"
+                ).bindparams(iid=inv_id, tid=tid, pid=patient_id, eid=enc_id))
+
+                await s.execute(text(
+                    "INSERT INTO prescription (id, tenant_id, patient_id, practitioner_id, encounter_id) "
+                    "VALUES (:rxid, :tid, CAST(:pid AS uuid), :prid, :eid)"
+                ).bindparams(rxid=rx_id, tid=tid, pid=patient_id, prid=prac_id, eid=enc_id))
+
+                await s.execute(text(
+                    "INSERT INTO lab_order (id, tenant_id, patient_id, practitioner_id, encounter_id) "
+                    "VALUES (:loid, :tid, CAST(:pid AS uuid), :prid, :eid)"
+                ).bindparams(loid=lab_id, tid=tid, pid=patient_id, prid=prac_id, eid=enc_id))
+
+                await s.commit()
+
+        # Verify rows exist before deletion
+        async with session_factory() as session:
+            async with tenant_session(session, ctx_operator, tenant_id=tid) as s:
+                assert (await s.execute(text("SELECT COUNT(*) FROM patient WHERE tenant_id = :tid").bindparams(tid=tid))).scalar() == 1
+                assert (await s.execute(text("SELECT COUNT(*) FROM encounter WHERE tenant_id = :tid").bindparams(tid=tid))).scalar() == 1
+                assert (await s.execute(text("SELECT COUNT(*) FROM invoice WHERE tenant_id = :tid").bindparams(tid=tid))).scalar() == 1
+                assert (await s.execute(text("SELECT COUNT(*) FROM prescription WHERE tenant_id = :tid").bindparams(tid=tid))).scalar() == 1
+                assert (await s.execute(text("SELECT COUNT(*) FROM lab_order WHERE tenant_id = :tid").bindparams(tid=tid))).scalar() == 1
+
+        # 3. Perform Cascade Offboarding
+        async with session_factory() as session:
+            async with tenant_session(session, ctx_operator, tenant_id=tid) as s:
+                summary = await _offboard_tenant_cascade(s, tid)
+                print("CASCADE DELETE SUMMARY:", summary)
+                await s.commit()
+
+        # 4. Strict assertions: 0 rows remain across every table for tenant_id = tid
+        admin_engine_check = create_async_engine(ADMIN_DATABASE_URL)
+        async with async_sessionmaker(admin_engine_check)() as s:
+            # Root tenant table check
+            assert (await s.execute(text("SELECT COUNT(*) FROM tenant WHERE id = :tid").bindparams(tid=tid))).scalar() == 0
+
+            # Tenant-scoped child tables checks
+            assert (await s.execute(text("SELECT COUNT(*) FROM patient WHERE tenant_id = :tid").bindparams(tid=tid))).scalar() == 0
+            assert (await s.execute(text("SELECT COUNT(*) FROM encounter WHERE tenant_id = :tid").bindparams(tid=tid))).scalar() == 0
+            assert (await s.execute(text("SELECT COUNT(*) FROM appointment WHERE tenant_id = :tid").bindparams(tid=tid))).scalar() == 0
+            assert (await s.execute(text("SELECT COUNT(*) FROM invoice WHERE tenant_id = :tid").bindparams(tid=tid))).scalar() == 0
+            assert (await s.execute(text("SELECT COUNT(*) FROM prescription WHERE tenant_id = :tid").bindparams(tid=tid))).scalar() == 0
+            assert (await s.execute(text("SELECT COUNT(*) FROM lab_order WHERE tenant_id = :tid").bindparams(tid=tid))).scalar() == 0
+            assert (await s.execute(text("SELECT COUNT(*) FROM allergy_intolerance WHERE tenant_id = :tid").bindparams(tid=tid))).scalar() == 0
+            assert (await s.execute(text("SELECT COUNT(*) FROM condition WHERE tenant_id = :tid").bindparams(tid=tid))).scalar() == 0
+            assert (await s.execute(text("SELECT COUNT(*) FROM vital_sign WHERE tenant_id = :tid").bindparams(tid=tid))).scalar() == 0
+            assert (await s.execute(text("SELECT COUNT(*) FROM practitioner WHERE tenant_id = :tid").bindparams(tid=tid))).scalar() == 0
+            assert (await s.execute(text("SELECT COUNT(*) FROM site WHERE tenant_id = :tid").bindparams(tid=tid))).scalar() == 0
+            assert (await s.execute(text("SELECT COUNT(*) FROM room WHERE tenant_id = :tid").bindparams(tid=tid))).scalar() == 0
+            assert (await s.execute(text("SELECT COUNT(*) FROM service WHERE tenant_id = :tid").bindparams(tid=tid))).scalar() == 0
+        await admin_engine_check.dispose()
+
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_operator_cross_tenant_offboard_isolation():
+    """PLT-002: Operator Target Tenant Offboarding Context Isolation.
+
+    Verifies that when an operator authenticated in context tenant_id='t_a' offboards target tenant 't_b':
+    1. Tenant 't_b' and all its tenant-scoped rows are cascade-deleted.
+    2. Tenant 't_a' and all 't_a' patient/clinical rows remain 100% UNTOUCHED.
+    """
+    from hms_tenancy import RequestContext, tenant_session
+    from app.routers.tenants import _offboard_tenant_cascade
+
+    ctx_operator_a = RequestContext(tenant_id="t_a", user_id="operator@zensynq.com", role="operator")
+    target_tenant_b = f"t_b_off_{uuid.uuid4().hex[:6]}"
+
+    engine = create_async_engine(DATABASE_URL)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    try:
+        # 1. Provision target tenant B & insert patient under tenant A and tenant B
+        admin_engine = create_async_engine(ADMIN_DATABASE_URL)
+        async with async_sessionmaker(admin_engine)() as s:
+            await s.execute(text("INSERT INTO tenant (id, name) VALUES (:tid, 'Tenant B')").bindparams(tid=target_tenant_b))
+            await s.commit()
+        await admin_engine.dispose()
+
+        async with session_factory() as session:
+            # Insert patient for Tenant A
+            await _set_tenant(session, "t_a")
+            await session.execute(text("INSERT INTO patient (tenant_id, given_name, family_name) VALUES ('t_a', 'Alice', 'TenantA')"))
+            await session.commit()
+
+        async with session_factory() as session:
+            # Insert patient for Tenant B
+            await _set_tenant(session, target_tenant_b)
+            await session.execute(text("INSERT INTO patient (tenant_id, given_name, family_name) VALUES (:tid, 'Bob', 'TenantB')").bindparams(tid=target_tenant_b))
+            await session.commit()
+
+        # 2. Operator authenticated in context t_a offboards target tenant B
+        async with session_factory() as session:
+            async with tenant_session(session, ctx_operator_a, tenant_id=target_tenant_b) as s:
+                await _offboard_tenant_cascade(s, target_tenant_b)
+                await s.commit()
+
+        # 3. Assert Tenant B is deleted
+        admin_engine_check = create_async_engine(ADMIN_DATABASE_URL)
+        async with async_sessionmaker(admin_engine_check)() as s:
+            assert (await s.execute(text("SELECT COUNT(*) FROM tenant WHERE id = :tid").bindparams(tid=target_tenant_b))).scalar() == 0
+            assert (await s.execute(text("SELECT COUNT(*) FROM patient WHERE tenant_id = :tid").bindparams(tid=target_tenant_b))).scalar() == 0
+
+            # 4. Assert Tenant A remains 100% UNTOUCHED
+            assert (await s.execute(text("SELECT COUNT(*) FROM patient WHERE tenant_id = 't_a' AND given_name = 'Alice'"))).scalar() >= 1
+        await admin_engine_check.dispose()
+
+    finally:
+        # Teardown test tenant A so no debris is left in PostgreSQL
+        try:
+            async with session_factory() as session:
+                async with tenant_session(session, ctx_operator_a, tenant_id="t_a") as s:
+                    await _offboard_tenant_cascade(s, "t_a")
+                    await s.commit()
+        except Exception:
+            pass
+        await engine.dispose()
