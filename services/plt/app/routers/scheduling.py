@@ -107,6 +107,50 @@ async def create_service(
     return ServiceOut(**row)
 
 
+@router.get("/practitioners", response_model=list[PractitionerOut])
+async def list_practitioners(
+    ctx: RequestContext = Depends(auth),
+    session: AsyncSession = Depends(get_session)
+):
+    """List practitioners for active tenant (SCH-001)."""
+    async with tenant_session(session, ctx) as s:
+        rows = (await s.execute(text("SELECT id, name, specialism FROM practitioner"))).mappings().all()
+    return [PractitionerOut(**r) for r in rows]
+
+
+@router.get("/sites", response_model=list[SiteOut])
+async def list_sites(
+    ctx: RequestContext = Depends(auth),
+    session: AsyncSession = Depends(get_session)
+):
+    """List sites for active tenant (SCH-001)."""
+    async with tenant_session(session, ctx) as s:
+        rows = (await s.execute(text("SELECT id, name, address FROM site"))).mappings().all()
+    return [SiteOut(**r) for r in rows]
+
+
+@router.get("/rooms", response_model=list[RoomOut])
+async def list_rooms(
+    ctx: RequestContext = Depends(auth),
+    session: AsyncSession = Depends(get_session)
+):
+    """List rooms for active tenant (SCH-001)."""
+    async with tenant_session(session, ctx) as s:
+        rows = (await s.execute(text("SELECT id, site_id, name, type FROM room"))).mappings().all()
+    return [RoomOut(**r) for r in rows]
+
+
+@router.get("/services", response_model=list[ServiceOut])
+async def list_services(
+    ctx: RequestContext = Depends(auth),
+    session: AsyncSession = Depends(get_session)
+):
+    """List services for active tenant (SCH-001)."""
+    async with tenant_session(session, ctx) as s:
+        rows = (await s.execute(text("SELECT id, name, duration_minutes FROM service"))).mappings().all()
+    return [ServiceOut(**r) for r in rows]
+
+
 @router.post("/practitioners", response_model=PractitionerOut, status_code=201)
 async def create_practitioner(
     body: PractitionerCreate,

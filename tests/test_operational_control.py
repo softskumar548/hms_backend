@@ -7,7 +7,7 @@ client = TestClient(app)
 
 
 def test_multi_tenant_metrics_and_invoicing():
-    headers = {"Authorization": "Bearer dev.apollo.operator"}
+    headers = {"Authorization": "Bearer dev.__operator__.operator"}
 
     # 1. Fetch multi-tenant platform metrics (TEN-301)
     resp = client.get("/tenants/metrics", headers=headers)
@@ -38,7 +38,7 @@ def test_multi_tenant_metrics_and_invoicing():
 
 
 def test_operator_support_access_impersonation():
-    headers = {"Authorization": "Bearer dev.apollo.operator"}
+    headers = {"Authorization": "Bearer dev.__operator__.operator"}
     support_payload = {
         "reason": "Investigating payment reconciliation query from hospital admin",
         "duration_minutes": 60
@@ -72,7 +72,7 @@ def test_aarogyasri_cashless_pre_auth_claim():
 import uuid
 
 def test_tenant_suspension_and_emergency_override():
-    headers = {"Authorization": "Bearer dev.apollo.operator"}
+    headers = {"Authorization": "Bearer dev.__operator__.operator"}
     tenant_id = f"test_susp_{uuid.uuid4().hex[:6]}"
 
     # 1. Provision target tenant

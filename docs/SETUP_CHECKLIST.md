@@ -35,3 +35,7 @@ Do these in order. Items 1–7 are the day-one setup from the kickoff pack.
 - Multiple app nodes behind a load balancer for the 99.95% SLA.
 - Same containers as staging; only scale + managed services differ.
 - Kafka in place of Postgres/Redis events when volume justifies it.
+
+## Known Open Items & Bug Tickets
+- **`BUG-POR-001` (Portal Invitation RLS Violation)**: Unauthenticated `/por/activate` endpoint updates `portal_invitation` status without explicit target tenant session binding when caller has no `ctx.tenant_id`. Needs `tenant_session(session, ctx, tenant_id=invite.tenant_id)` context binding prior to update.
+- **`TASK-TEN-105-HARDENING` (Practitioner System Placeholder Flag)**: Add explicit `is_system_placeholder BOOLEAN DEFAULT FALSE` column to `practitioner` table instead of relying on ID prefix filtering (`id NOT LIKE 'prac_%_1'`) in `STAFF_ENROLLED` readiness check.

@@ -18,7 +18,7 @@ import uuid
 
 def test_operator_can_provision_and_manage_tenant():
     """Operator role successfully provisions, lists, retrieves, and updates tenant status."""
-    headers = {"Authorization": "Bearer dev.apollo.operator"}
+    headers = {"Authorization": "Bearer dev.__operator__.operator"}
 
     # 1. Provision new tenant
     tenant_id = f"test_hosp_{uuid.uuid4().hex[:6]}"
@@ -99,7 +99,7 @@ def test_tenant_roles_blocked_from_operator_endpoints(role: str):
 
 def test_operator_can_offboard_tenant_cascade():
     """T3-01: Operator can provision and then atomically offboard/cascade-delete a tenant."""
-    headers = {"Authorization": "Bearer dev.apollo.operator"}
+    headers = {"Authorization": "Bearer dev.__operator__.operator"}
     tenant_id = f"test_offboard_{uuid.uuid4().hex[:6]}"
 
     # Provision

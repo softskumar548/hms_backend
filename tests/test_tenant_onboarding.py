@@ -16,7 +16,7 @@ client = TestClient(app)
 import uuid
 
 def test_end_to_end_tenant_onboarding_journey():
-    headers = {"Authorization": "Bearer dev.apollo.operator"}
+    headers = {"Authorization": "Bearer dev.__operator__.operator"}
     tenant_id = f"hosp_n4_{uuid.uuid4().hex[:6]}"
 
     # 1. Provision new tenant (TEN-101)
@@ -44,6 +44,17 @@ def test_end_to_end_tenant_onboarding_journey():
     resp = client.post(f"/tenants/{tenant_id}/wizard/config", json=config_payload, headers=headers)
     assert resp.status_code == 200
     assert resp.json()["wizard_status"] == "configured"
+
+    # 2b. Enroll genuine staff member via invitation (TEN-105)
+    invite_payload = {
+        "email": f"dr.verma.{tenant_id}@zensynq.com",
+        "role": "physician",
+        "given_name": "Suresh",
+        "family_name": "Verma",
+        "department": "Cardiology"
+    }
+    resp = client.post(f"/tenants/{tenant_id}/invitations", json=invite_payload, headers=headers)
+    assert resp.status_code == 201
 
     # 3. Stage legacy CSV patient data (TEN-201)
     stage_payload = {
@@ -101,7 +112,7 @@ def test_end_to_end_tenant_onboarding_journey():
 
 
 def test_readiness_checklist_individual_check_gating_behavior():
-    headers = {"Authorization": "Bearer dev.apollo.operator"}
+    headers = {"Authorization": "Bearer dev.__operator__.operator"}
 
     # Case A: Fresh provisioned tenant (zero staff, zero sites, un-reconciled)
     fresh_tid = f"test_hosp_{uuid.uuid4().hex[:6]}"

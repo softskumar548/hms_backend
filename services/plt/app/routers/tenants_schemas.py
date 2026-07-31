@@ -58,8 +58,9 @@ class StaffInvitePayload(BaseModel):
 
     email: str = Field(..., min_length=3)
     role: str = Field(..., min_length=2)
-    given_name: str = Field(..., min_length=1)
-    family_name: str = Field(..., min_length=1)
+    given_name: str | None = Field(default="Staff")
+    family_name: str | None = Field(default="Member")
+    department: str | None = Field(default=None)
 
 
 class MigrationStageItem(BaseModel):

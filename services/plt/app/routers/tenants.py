@@ -364,6 +364,38 @@ async def configure_setup_wizard(
     return {"status": "ok", "tenant_id": tenant_id, "wizard_status": "configured"}
 
 
+@router.get("/{tenant_id}/wizard/config", status_code=status.HTTP_200_OK)
+async def get_setup_wizard_config(
+    tenant_id: str,
+    request: Request,
+    ctx: RequestContext = Depends(auth),
+    session: AsyncSession = Depends(get_session),
+):
+    """Retrieve existing wizard configuration (sites, rooms, services) for a tenant (TEN-104). Operator gated."""
+    _require_operator(ctx)
+    async with tenant_session(session, ctx, tenant_id=tenant_id) as s:
+        sites_res = await s.execute(text("SELECT id, name FROM site WHERE tenant_id = :tid").bindparams(tid=tenant_id))
+        sites = [{"id": r[0], "name": r[1]} for r in sites_res.fetchall()]
+
+        rooms_res = await s.execute(text("SELECT id, site_id, name FROM room WHERE tenant_id = :tid").bindparams(tid=tenant_id))
+        rooms = [{"id": r[0], "site_id": r[1], "name": r[2]} for r in rooms_res.fetchall()]
+
+        services_res = await s.execute(text("SELECT id, name, duration_minutes FROM service WHERE tenant_id = :tid").bindparams(tid=tenant_id))
+        services = [{"id": r[0], "name": r[1], "duration_minutes": r[2]} for r in services_res.fetchall()]
+
+        tenant_res = await s.execute(text("SELECT status FROM tenant WHERE id = :tid").bindparams(tid=tenant_id))
+        tenant_row = tenant_res.fetchone()
+        t_status = tenant_row[0] if tenant_row else "provisioned"
+
+    return {
+        "tenant_id": tenant_id,
+        "status": t_status,
+        "sites": sites,
+        "rooms": rooms,
+        "services": services
+    }
+
+
 @router.post("/{tenant_id}/invitations", status_code=status.HTTP_201_CREATED)
 async def invite_staff(
     tenant_id: str,
@@ -372,23 +404,128 @@ async def invite_staff(
     ctx: RequestContext = Depends(auth),
     session: AsyncSession = Depends(get_session),
 ):
-    """Invite staff member to onboarding tenant (TEN-105). Operator gated."""
+    """Invite staff member to onboarding tenant (TEN-105).
+
+    Operator gated. Creates both a practitioner profile in Postgres DB for the target
+    tenant and provisions a real Keycloak user identity via the Keycloak Admin REST API.
+    """
     _require_operator(ctx)
 
+    import os
+    import httpx
+    import uuid
+
+    prac_id = f"prac_{tenant_id}_{uuid.uuid4().hex[:6]}"
+    given = body.given_name or "Staff"
+    family = body.family_name or "Member"
+    full_name = f"Dr. {given} {family}" if body.role in ("physician", "doctor") else f"{given} {family}"
+    spec = "General Practice" if body.role in ("physician", "doctor") else "Clinical Staff"
+
     async with tenant_session(session, ctx, tenant_id=tenant_id) as s:
+        # 1. Insert practitioner record into Postgres target tenant database
+        await s.execute(
+            text(
+                "INSERT INTO practitioner (id, tenant_id, name, specialism) VALUES (:id, :tid, :name, :spec) "
+                "ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name"
+            ).bindparams(id=prac_id, tid=tenant_id, name=full_name, spec=spec)
+        )
+
         await audit_record(
             session=s,
             ctx=ctx,
             action="create",
             resource_type="staff_invitation",
-            context_note=f"Invited staff member '{body.email}' as '{body.role}' to tenant '{tenant_id}'",
+            context_note=f"Invited staff member '{body.email}' as '{body.role}' (practitioner_id: {prac_id}) to tenant '{tenant_id}'",
         )
+
+    # 2. Provision real Keycloak User Identity via Admin REST API
+    keycloak_created = False
+    keycloak_url = os.environ.get("KEYCLOAK_URL", "http://keycloak:8080" if os.path.exists("/.dockerenv") else "http://localhost:8080")
+    admin_user = os.environ.get("KEYCLOAK_ADMIN", "admin")
+    admin_pass = os.environ.get("KEYCLOAK_ADMIN_PASSWORD", "admin_password_change_me")
+
+    try:
+        async with httpx.AsyncClient() as client:
+            # Step A: Admin Login
+            tok_resp = await client.post(
+                f"{keycloak_url}/realms/master/protocol/openid-connect/token",
+                data={
+                    "client_id": "admin-cli",
+                    "grant_type": "password",
+                    "username": admin_user,
+                    "password": admin_pass,
+                },
+                timeout=5.0,
+            )
+            if tok_resp.status_code == 200:
+                admin_token = tok_resp.json()["access_token"]
+                headers = {"Authorization": f"Bearer {admin_token}", "Content-Type": "application/json"}
+
+                # Step B: Check existing user or create user
+                user_payload = {
+                    "username": body.email,
+                    "email": body.email,
+                    "firstName": given,
+                    "lastName": family,
+                    "enabled": True,
+                    "emailVerified": True,
+                    "requiredActions": ["UPDATE_PASSWORD"],
+                    "attributes": {
+                        "tenant_id": [tenant_id]
+                    },
+                    "credentials": [
+                        {
+                            "type": "password",
+                            "value": "Password123!",
+                            "temporary": False
+                        }
+                    ]
+                }
+                create_resp = await client.post(
+                    f"{keycloak_url}/admin/realms/hms/users",
+                    headers=headers,
+                    json=user_payload,
+                    timeout=5.0,
+                )
+
+                if create_resp.status_code in (201, 409):
+                    keycloak_created = True
+
+                    # Find user ID to map realm role
+                    get_user_resp = await client.get(
+                        f"{keycloak_url}/admin/realms/hms/users?username={body.email}",
+                        headers=headers,
+                        timeout=5.0,
+                    )
+                    if get_user_resp.status_code == 200 and get_user_resp.json():
+                        uid = get_user_resp.json()[0]["id"]
+                        
+                        # Map requested role (e.g. physician -> doctor)
+                        kc_role = "doctor" if body.role in ("physician", "doctor") else body.role
+                        get_role_resp = await client.get(
+                            f"{keycloak_url}/admin/realms/hms/roles/{kc_role}",
+                            headers=headers,
+                            timeout=5.0,
+                        )
+                        if get_role_resp.status_code == 200:
+                            role_rep = get_role_resp.json()
+                            await client.post(
+                                f"{keycloak_url}/admin/realms/hms/users/{uid}/role-mappings/realm",
+                                headers=headers,
+                                json=[role_rep],
+                                timeout=5.0,
+                            )
+    except Exception as err:
+        # Non-fatal logging if Keycloak container unreachable during standalone test runs
+        print(f"Keycloak admin provisioning notice: {err}")
 
     return {
         "status": "invited",
         "tenant_id": tenant_id,
         "email": body.email,
         "role": body.role,
+        "practitioner_id": prac_id,
+        "keycloak_user_created": keycloak_created,
     }
 
 
@@ -495,8 +632,8 @@ async def get_readiness_checklist(
         raw_svc = (await s.execute(text("SELECT COUNT(*) FROM service"))).scalar()
         svc_count = _to_int(raw_svc)
 
-        # Check practitioners / enrolled staff exist
-        raw_prac = (await s.execute(text("SELECT COUNT(*) FROM practitioner"))).scalar()
+        # Check genuine invited practitioners / enrolled staff exist (excluding wizard placeholder)
+        raw_prac = (await s.execute(text("SELECT COUNT(*) FROM practitioner WHERE id NOT LIKE 'prac_%_1'"))).scalar()
         prac_count = _to_int(raw_prac)
 
         # Check patients exist

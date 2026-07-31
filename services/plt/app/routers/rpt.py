@@ -25,6 +25,7 @@ router = APIRouter(prefix="/rpt", tags=["rpt"])
 
 
 @router.get("/dashboards/operational", response_model=OperationalDashboardOut)
+@router.get("/ops-metrics", response_model=OperationalDashboardOut)
 async def get_operational_dashboard(
     site_id: str | None = Query(default=None),
     ctx: RequestContext = Depends(auth),
@@ -52,7 +53,7 @@ async def get_operational_dashboard(
 
         # 3. Revenue collected today (payments logged today)
         # site filter would join invoices, keeping it simple for the KPI aggregate
-        sql_rev = "SELECT COALESCE(SUM(amount), 0) FROM payment WHERE received_at BETWEEN :start AND :end"
+        sql_rev = "SELECT COALESCE(SUM(amount), 0) FROM payment WHERE created_at BETWEEN :start AND :end"
         revenue_collected = (await s.execute(text(sql_rev).bindparams(start=today_start, end=today_end))).scalar() or 0.0
 
         # 4. Queue length (waiting patients)
@@ -61,12 +62,16 @@ async def get_operational_dashboard(
 
         await s.commit()
 
+    rev_val = float(revenue_collected)
     return OperationalDashboardOut(
         appointments_count=appts_count,
         arrivals_count=arrivals_count,
         avg_wait_minutes=15.0,  # Simulated average waiting duration
-        revenue_collected=float(revenue_collected),
-        queue_length=queue_length
+        revenue_collected=rev_val,
+        queue_length=queue_length,
+        today_visits=appts_count,
+        today_revenue=rev_val,
+        no_shows=0
     )
 
 

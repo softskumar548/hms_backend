@@ -8,6 +8,9 @@ class OperationalDashboardOut(BaseModel):
     avg_wait_minutes: float
     revenue_collected: float
     queue_length: int
+    today_visits: int = 0
+    today_revenue: float = 0.0
+    no_shows: int = 0
 
 
 class VisitsReportItem(BaseModel):
