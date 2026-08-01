@@ -9,11 +9,14 @@ CREATE TABLE IF NOT EXISTS tenant (
     currency     TEXT NOT NULL DEFAULT 'INR',
     features     JSONB NOT NULL DEFAULT '{"ref_commission": false}'::jsonb,
     status       TEXT NOT NULL DEFAULT 'active',
+    is_synthetic BOOLEAN NOT NULL DEFAULT FALSE,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+ALTER TABLE tenant ADD COLUMN IF NOT EXISTS is_synthetic BOOLEAN NOT NULL DEFAULT FALSE;
+
 -- Seed baseline demo tenants
-INSERT INTO tenant (id, name) VALUES ('apollo', 'Apollo Clinic (demo)'), ('kims', 'KIMS Hospital (demo)'), ('t_a', 'Tenant A'), ('t_b', 'Tenant B') ON CONFLICT DO NOTHING;
+INSERT INTO tenant (id, name, is_synthetic) VALUES ('apollo', 'Apollo Clinic (demo)', false), ('kims', 'KIMS Hospital (demo)', false), ('t_a', 'Tenant A', true), ('t_b', 'Tenant B', true) ON CONFLICT (id) DO UPDATE SET is_synthetic = EXCLUDED.is_synthetic;
 
 DO $$
 BEGIN

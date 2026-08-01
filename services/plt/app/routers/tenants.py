@@ -80,9 +80,9 @@ async def provision_tenant(
         result = (
             await s.execute(
                 text(
-                    "INSERT INTO tenant (id, name, region, locale, currency, features, status) "
-                    "VALUES (:id, :name, :region, :locale, :currency, CAST(:features AS jsonb), 'provisioned') "
-                    "RETURNING id, name, region, locale, currency, features, status, created_at"
+                    "INSERT INTO tenant (id, name, region, locale, currency, features, status, is_synthetic) "
+                    "VALUES (:id, :name, :region, :locale, :currency, CAST(:features AS jsonb), 'provisioned', :is_synthetic) "
+                    "RETURNING id, name, region, locale, currency, features, status, is_synthetic, created_at"
                 ).bindparams(
                     id=body.id,
                     name=body.name,
@@ -90,6 +90,7 @@ async def provision_tenant(
                     locale=body.locale,
                     currency=body.currency,
                     features=json.dumps(body.features),
+                    is_synthetic=body.is_synthetic,
                 )
             )
         ).mappings().one()
@@ -109,9 +110,10 @@ async def provision_tenant(
             region=result.get("region", body.region),
             locale=result.get("locale", body.locale),
             currency=result.get("currency", body.currency),
-            status=result.get("status", "provisioned"),
+            status=result["status"],
+            is_synthetic=bool(result.get("is_synthetic", False)),
             features=feats,
-            created_at=str(result.get("created_at", "")),
+            created_at=result["created_at"],
         )
 
 
@@ -127,7 +129,7 @@ async def list_tenants(
     async with tenant_session(session, ctx) as s:
         rows = (
             await s.execute(
-                text("SELECT id, name, region, locale, currency, features, status, created_at FROM tenant ORDER BY created_at DESC")
+                text("SELECT id, name, region, locale, currency, features, status, COALESCE(is_synthetic, false) AS is_synthetic, created_at FROM tenant ORDER BY created_at DESC")
             )
         ).mappings().all()
 
@@ -143,6 +145,7 @@ async def list_tenants(
                     locale=r.get("locale", "en-IN"),
                     currency=r.get("currency", "INR"),
                     status=r.get("status", "active"),
+                    is_synthetic=bool(r.get("is_synthetic", False)),
                     features=feats,
                     created_at=str(r.get("created_at", "")),
                 )
@@ -162,7 +165,7 @@ async def get_tenant_metrics(
     async with tenant_session(session, ctx) as s:
         rows = (
             await s.execute(
-                text("SELECT id, name, status FROM tenant")
+                text("SELECT id, name, status, COALESCE(is_synthetic, false) AS is_synthetic FROM tenant")
             )
         ).mappings().all()
 
@@ -193,11 +196,12 @@ async def get_tenant_metrics(
                     room_count=_to_int(room_res),
                     service_count=_to_int(svc_res),
                     status=r.get("status", "provisioned"),
+                    is_synthetic=bool(r.get("is_synthetic", False)),
                 )
             )
 
         return TenantMetricsOut(
-            generated_at="2026-07-22T07:30:00Z",
+            generated_at=datetime.now(timezone.utc).isoformat(),
             total_tenants=len(metrics_list),
             metrics=metrics_list,
         )

@@ -15,6 +15,7 @@ class TenantCreate(BaseModel):
     region: str = Field(default="india", description="Region / residency location")
     locale: str = Field(default="en-IN", description="Default locale")
     currency: str = Field(default="INR", description="Default currency code")
+    is_synthetic: bool = Field(default=False, description="Flag for synthetic/demo/test tenants")
     features: dict[str, bool] = Field(
         default_factory=lambda: {"ref_commission": False},
         description="Feature flag map (e.g. ref_commission)"
@@ -114,6 +115,7 @@ class TenantMetricsItem(BaseModel):
     room_count: int
     service_count: int
     status: str
+    is_synthetic: bool = False
 
 
 class TenantMetricsOut(BaseModel):
@@ -201,5 +203,6 @@ class TenantOut(BaseModel):
     locale: str
     currency: str
     status: str
+    is_synthetic: bool = False
     features: dict[str, bool]
     created_at: str | datetime
