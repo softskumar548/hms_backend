@@ -7,16 +7,39 @@ from pydantic import BaseModel, Field, ConfigDict
 TenantStatus = Literal["draft", "provisioned", "configured", "active", "suspended"]
 
 
+class ContactInfo(BaseModel):
+    name: str = Field(..., min_length=2)
+    phone: str = Field(..., min_length=5)
+    email: str = Field(..., min_length=3)
+    designation: str = Field(default="Administrator")
+
+
+class ContractAttestation(BaseModel):
+    document_filename: str | None = Field(default=None)
+    signatory_name: str = Field(..., min_length=2)
+    signatory_designation: str = Field(default="Authorized Signatory")
+    signatory_phone: str = Field(..., min_length=5)
+    signatory_email: str = Field(..., min_length=3)
+
+
 class TenantCreate(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     id: str = Field(..., min_length=2, max_length=50, description="Unique tenant identifier (e.g. apollo)")
     name: str = Field(..., min_length=2, max_length=200, description="Hospital or clinic name")
     region: str = Field(default="india", description="Region / residency location")
     locale: str = Field(default="en-IN", description="Default locale")
     currency: str = Field(default="INR", description="Default currency code")
+    custom_url: str | None = Field(default=None, description="Custom domain/subdomain URL")
+    isolated_db: bool = Field(default=False, description="Flag for dedicated isolated database")
+    address: str | None = Field(default=None, description="Physical address of the organization")
+    website: str | None = Field(default=None, description="Website URL")
+    primary_contact: ContactInfo | None = Field(default=None, description="Primary contact details")
+    secondary_contact: ContactInfo | None = Field(default=None, description="Secondary contact details")
+    admin_contact_target: str = Field(default="primary", description="Which contact gets the Tenant Admin role ('primary' or 'secondary')")
+    contract_attestation: ContractAttestation | None = Field(default=None, description="Physical signed contract document attestation")
     is_synthetic: bool = Field(default=False, description="Flag for synthetic/demo/test tenants")
-    features: dict[str, bool] = Field(
+    features: dict[str, Any] = Field(
         default_factory=lambda: {"ref_commission": False},
         description="Feature flag map (e.g. ref_commission)"
     )

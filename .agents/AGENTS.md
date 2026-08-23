@@ -11,7 +11,7 @@ same PR — a stale AGENTS.md is worse than none, because it actively misleads.
 
 A multi-tenant **Hospital Management System delivered as SaaS** — one platform many
 hospitals/clinics subscribe to. Launch market: **Andhra Pradesh, India**.
-Product domain: `hms.zensynq.com` (staging: `staging.hms.zensynq.com`).
+Product domain: `hms.zensynq.com` (staging: `stage.zensynq.com` / `staging.hms.zensynq.com`).
 
 Requirements live in `docs/`:
 - FRD (`HMS-FRD-001`) — MVP functional requirements, all modules.
@@ -29,7 +29,17 @@ Every requirement has an ID (`PLT-002`, `REG-001`, `IAM-006`, `TEN-101`, `REF-06
 ## 2. Where the project actually is (update this section as phases close)
 
 - **Foundation, all 9 modules, tenant onboarding (TEN-101…205): built and passing**
-  against real Postgres with RLS. Full suite currently 79 passing.
+  against real Postgres with RLS. Full suite currently 79 passing. Enhanced tenant
+  provisioning API now captures primary/secondary contact info, validates contract
+  signatory details, and auto-provisions designated Tenant Admin practitioners.
+- **Sprint E4 — Platform Control Center & Billing Ops (TEN-301…304): BUILT & LIVE**
+  - Subscription status tracking & invoicing (`TEN-301`).
+  - Suspension lifecycle & reactivation (`TEN-303`).
+  - Operator emergency overrides & break-glass audit logs (`TEN-304`).
+  - Operator Console UI (`hms-web`) with tenant roster, KPI cards, and override controls.
+- **Readiness Engine & Safe Offboarding (T1-03, T3-01): BUILT & LIVE**
+  - Full 6-check setup readiness evaluation engine with badge rendering in UI.
+  - Dynamic topological cascade engine for safe tenant offboarding with UI modal safeguards.
 - **Auth: real Keycloak/OIDC is LIVE** — RS256 validation with JWKS caching,
   `app.tenant_id` custom claim → `RequestContext`, roles from `realm_access.roles`.
   Verified end-to-end with a real browser login and a real token calling `/patients`.
@@ -40,9 +50,6 @@ Every requirement has an ID (`PLT-002`, `REG-001`, `IAM-006`, `TEN-101`, `REF-06
 - **Staging deployment (`staging.hms.zensynq.com`) is NOT live** — DNS/TLS/VPS
   provisioning is pending infra. Anything claiming staging works must be verified
   from OUTSIDE the VPS before it's believed.
-- **Current focus: Sprint E4** — Platform Control Center & billing ops
-  (`TEN-301` subscription invoicing, `TEN-302` Aarogyasri/PMJAY pre-auth,
-  `TEN-303` suspend, `TEN-304` operator override).
 
 ---
 
@@ -245,8 +252,7 @@ partially done. The standard is therefore explicit:
 
 - **D5 — staging not live**: `staging.hms.zensynq.com` needs DNS + VPS deploy + TLS,
   verified with `curl -I` from outside the VPS. Blocks the client demo, not dev work.
-- **Readiness engine**: verify whether it evaluates all specified hard-stop criteria
-  (a walkthrough showed 4 checks; the spec called for 6). Confirm or build the gap.
+- **Readiness engine**: COMPLETED — evaluates all 6 specified hard-stop criteria (`T1-03`).
 - **FHIR export timestamp**: `exported_at` appeared stale/hardcoded in a walkthrough —
   confirm it uses generation time.
 - **ABDM**: sandbox integration is a continuous parallel workstream, not a sprint item.

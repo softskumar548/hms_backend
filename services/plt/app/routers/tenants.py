@@ -62,6 +62,52 @@ async def provision_tenant(
     """Provision a new hospital/clinic tenant (TEN-101). Operator gated."""
     _require_operator(ctx)
 
+    # 1. Signatory Validation Check (if contract attestation provided)
+    if body.contract_attestation and (body.primary_contact or body.secondary_contact):
+        sig_name = body.contract_attestation.signatory_name.lower().strip()
+        sig_email = body.contract_attestation.signatory_email.lower().strip()
+        sig_phone = body.contract_attestation.signatory_phone.strip()
+
+        prim_match = False
+        if body.primary_contact:
+            p_name = body.primary_contact.name.lower().strip()
+            p_email = body.primary_contact.email.lower().strip()
+            p_phone = body.primary_contact.phone.strip()
+            if sig_email == p_email or sig_phone == p_phone or sig_name in p_name or p_name in sig_name:
+                prim_match = True
+
+        sec_match = False
+        if body.secondary_contact:
+            s_name = body.secondary_contact.name.lower().strip()
+            s_email = body.secondary_contact.email.lower().strip()
+            s_phone = body.secondary_contact.phone.strip()
+            if sig_email == s_email or sig_phone == s_phone or sig_name in s_name or s_name in sig_name:
+                sec_match = True
+
+        if not (prim_match or sec_match):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Contract signatory details must match either Primary Contact or Secondary Contact.",
+            )
+
+    # 2. Package metadata into features JSONB
+    features_dict = body.features.copy() if body.features else {}
+    if body.custom_url:
+        features_dict["custom_url"] = body.custom_url
+    if body.isolated_db:
+        features_dict["isolated_db"] = body.isolated_db
+    if body.address:
+        features_dict["address"] = body.address
+    if body.website:
+        features_dict["website"] = body.website
+    if body.primary_contact:
+        features_dict["primary_contact"] = body.primary_contact.model_dump()
+    if body.secondary_contact:
+        features_dict["secondary_contact"] = body.secondary_contact.model_dump()
+    if body.contract_attestation:
+        features_dict["contract_attestation"] = body.contract_attestation.model_dump()
+    features_dict["admin_contact_target"] = body.admin_contact_target
+
     async with tenant_session(session, ctx) as s:
         # Check if tenant ID already exists
         existing = (
@@ -89,18 +135,35 @@ async def provision_tenant(
                     region=body.region,
                     locale=body.locale,
                     currency=body.currency,
-                    features=json.dumps(body.features),
+                    features=json.dumps(features_dict),
                     is_synthetic=body.is_synthetic,
                 )
             )
         ).mappings().one()
+
+        # 3. Auto-provision designated Admin Contact as Tenant Admin practitioner
+        admin_contact = None
+        if body.admin_contact_target == "secondary" and body.secondary_contact:
+            admin_contact = body.secondary_contact
+        elif body.primary_contact:
+            admin_contact = body.primary_contact
+
+        if admin_contact:
+            prac_id = f"prac_{body.id}_admin"
+            await s.execute(
+                text(
+                    "INSERT INTO practitioner (id, tenant_id, name, specialism) "
+                    "VALUES (:id, :tid, :name, 'Tenant Administrator') "
+                    "ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name"
+                ).bindparams(id=prac_id, tid=body.id, name=admin_contact.name)
+            )
 
         await audit_record(
             session=s,
             ctx=ctx,
             action="create",
             resource_type="tenant",
-            context_note=f"Provisioned tenant '{body.id}' with status 'provisioned'",
+            context_note=f"Provisioned tenant '{body.id}' with designated admin '{admin_contact.name if admin_contact else 'N/A'}'",
         )
 
         feats = json.loads(result["features"]) if isinstance(result.get("features"), str) else (result.get("features") or {})
