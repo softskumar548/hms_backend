@@ -67,6 +67,12 @@ services:
     ports:
       - "8000:8000"   # remove in staging/prod; nginx fronts it
 
+  web:
+    image: hms-web:latest
+    restart: always
+    expose:
+      - "80"
+
   nginx:
     image: nginx:1.27
     volumes:
@@ -74,6 +80,7 @@ services:
       - /etc/letsencrypt:/etc/letsencrypt:ro
     depends_on:
       - plt
+      - web
     ports:
       - "80:80"
       - "443:443"
