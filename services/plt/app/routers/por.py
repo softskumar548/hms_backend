@@ -130,7 +130,7 @@ async def list_portal_visits(
             "pr.name as practitioner_name "
             "FROM appointment a "
             "LEFT JOIN patient p ON a.patient_id = p.id "
-            "LEFT JOIN service_catalog s ON a.service_id = s.id "
+            "LEFT JOIN service s ON a.service_id = s.id "
             "LEFT JOIN practitioner pr ON a.practitioner_id = pr.id "
         )
         params = {}
