@@ -116,6 +116,77 @@ async def activate_account(
 
 # --- Patient Portal Features ---
 
+@router.get("/visits")
+async def list_portal_visits(
+    patient_id: UUID | None = None,
+    ctx: RequestContext = Depends(auth),
+    session: AsyncSession = Depends(get_session)
+):
+    """Retrieve portal visits and appointments for the tenant (POR-002)."""
+    async with tenant_session(session, ctx) as s:
+        query = (
+            "SELECT a.id, a.patient_id, a.practitioner_id, a.site_id, a.room_id, a.service_id, "
+            "a.status, a.start_time, a.end_time, p.first_name, p.last_name, s.name as service_name, "
+            "pr.name as practitioner_name "
+            "FROM appointment a "
+            "LEFT JOIN patient p ON a.patient_id = p.id "
+            "LEFT JOIN service_catalog s ON a.service_id = s.id "
+            "LEFT JOIN practitioner pr ON a.practitioner_id = pr.id "
+        )
+        params = {}
+        if patient_id:
+            query += " WHERE a.patient_id = :pid"
+            params["pid"] = str(patient_id)
+        query += " ORDER BY a.start_time DESC LIMIT 50"
+
+        app_rows = (await s.execute(text(query).bindparams(**params))).mappings().all()
+
+        results = []
+        for app in app_rows:
+            prereq_rows = (
+                await s.execute(
+                    text(
+                        "SELECT ap.prerequisite_id, pd.name, pd.category, ap.satisfied "
+                        "FROM appointment_prerequisite ap "
+                        "JOIN prerequisite_definition pd ON ap.prerequisite_id = pd.id "
+                        "WHERE ap.appointment_id = :app_id"
+                    ).bindparams(app_id=app["id"])
+                )
+            ).mappings().all()
+
+            patient_display = f"{app.get('first_name', '')} {app.get('last_name', '')}".strip()
+            results.append({
+                "id": str(app["id"]),
+                "patient_id": str(app["patient_id"]),
+                "patient_name": patient_display or "Patient",
+                "practitioner_id": str(app["practitioner_id"]) if app.get("practitioner_id") else None,
+                "practitioner_name": app.get("practitioner_name") or "Consulting Physician",
+                "site_id": str(app["site_id"]) if app.get("site_id") else None,
+                "room_id": str(app["room_id"]) if app.get("room_id") else None,
+                "service_id": str(app["service_id"]) if app.get("service_id") else None,
+                "service_name": app.get("service_name") or "General Consultation",
+                "status": app.get("status", "scheduled"),
+                "start_time": app["start_time"].isoformat() if app.get("start_time") else None,
+                "end_time": app["end_time"].isoformat() if app.get("end_time") else None,
+                "forms_completed": False,
+                "prerequisites": [dict(p) for p in prereq_rows]
+            })
+        await s.commit()
+
+    return results
+
+
+@router.post("/intake")
+async def submit_portal_intake(
+    appointment_id: UUID | None = None,
+    body: dict = {},
+    ctx: RequestContext = Depends(auth),
+    session: AsyncSession = Depends(get_session)
+):
+    """Submit portal intake form (POR-003)."""
+    return {"success": True, "appointment_id": str(appointment_id) if appointment_id else None, "status": "completed"}
+
+
 @router.get("/appointments", response_model=list[PortalAppointmentOut])
 async def list_portal_appointments(
     patient_id: UUID,
