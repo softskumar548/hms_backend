@@ -584,7 +584,7 @@ async def invite_staff(
                                 json=[role_rep],
                                 timeout=5.0,
                             )
-    except Exception as err:
+    except (httpx.HTTPError, KeyError, ValueError, RuntimeError) as err:
         # Non-fatal logging if Keycloak container unreachable during standalone test runs
         print(f"Keycloak admin provisioning notice: {err}")
 

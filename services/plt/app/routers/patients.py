@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fhir.resources.patient import Patient as FHIRPatient
 try:
     FHIRPatient.model_rebuild()
-except Exception:
+except (TypeError, AttributeError, ValueError):
     pass
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
