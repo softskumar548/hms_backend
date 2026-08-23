@@ -93,7 +93,17 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
           port: 22
           script: |
-            cd /opt/hms
-            git pull origin main
+            if [ ! -d /opt/hms ]; then
+              mkdir -p /opt/hms
+              cd /opt/hms
+              git clone https://github.com/softskumar548/hms_backend.git .
+            else
+              cd /opt/hms
+              if [ ! -d .git ]; then
+                git clone https://github.com/softskumar548/hms_backend.git .
+              else
+                git pull origin main
+              fi
+            fi
             docker compose up -d --build
 
