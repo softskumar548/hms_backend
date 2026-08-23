@@ -284,13 +284,19 @@ async def book_appointment(
 
         appointment_id = row["id"]
 
-        # Bind any prerequisites to this appointment
-        if body.prerequisites:
-            for p_id in body.prerequisites:
+        # Bind any prerequisites to this appointment (SCH/REF)
+        prereq_ids = body.prerequisites
+        if not prereq_ids:
+            pr_rows = (await s.execute(text("SELECT id FROM prerequisite_definition WHERE tenant_id = :tid").bindparams(tid=ctx.tenant_id))).scalars().all()
+            prereq_ids = list(pr_rows)
+
+        if prereq_ids:
+            for p_id in prereq_ids:
                 await s.execute(
                     text(
                         "INSERT INTO appointment_prerequisite (appointment_id, prerequisite_id, tenant_id, satisfied) "
-                        "VALUES (:app_id, :pre_id, :tid, FALSE)"
+                        "VALUES (:app_id, :pre_id, :tid, FALSE) "
+                        "ON CONFLICT DO NOTHING"
                     ).bindparams(app_id=appointment_id, pre_id=p_id, tid=ctx.tenant_id)
                 )
 
