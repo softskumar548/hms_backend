@@ -47,9 +47,12 @@ Every requirement has an ID (`PLT-002`, `REG-001`, `IAM-006`, `TEN-101`, `REF-06
   accepted ONLY when `ALLOW_DEV_TOKENS=true` or `ENV=development`. They are rejected
   everywhere else with an `AUTH_FAILURE:` audit log. Do not build new features that
   assume dev tokens; do not widen this gate.
-- **Staging deployment (`stage.zensynq.com` / `103.174.103.158`): LIVE & ACTIVE** —
-  DNS A-record configured, Let's Encrypt TLS active, Nginx HTTPS reverse proxy live,
-  and automated GitHub Actions CI/CD workflows active for backend and frontend.
+- **Staging deployment (`stage.zensynq.com` / `103.174.103.158`): LIVE, VERIFIED & ACTIVE** —
+  DNS A-record active, Let's Encrypt TLS operational, Nginx HTTPS reverse proxy live,
+  and automated GitHub Actions CI/CD workflows active for backend (`hms_backend`) and frontend (`hms_web`).
+  - Nginx proxies `/api/` -> `plt:8000/`, `/auth/`, `/realms/`, `/resources/` -> `keycloak:8080/`, and `/` -> `web:80/` (SPA fallback).
+  - Keycloak requires `KC_PROXY_HEADERS: xforwarded` and Nginx `X-Forwarded-Prefix /auth` header.
+  - `libs/hms_auth` handles `https://stage.zensynq.com/auth/realms/hms` issuer validation and `platform_operator` tenant context fallback for operator tokens without `app.tenant_id`.
 
 ---
 
