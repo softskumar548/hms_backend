@@ -194,6 +194,26 @@ async def provision_tenant(
                 if tok_resp.status_code == 200:
                     admin_token = tok_resp.json()["access_token"]
                     headers = {"Authorization": f"Bearer {admin_token}", "Content-Type": "application/json"}
+
+                    # Ensure realm User Profile permits tenant_id attribute in Keycloak 24
+                    try:
+                        up_get = await client.get(f"{keycloak_url}/admin/realms/hms/users/profile", headers=headers, timeout=3.0)
+                        if up_get.status_code == 200:
+                            up_data = up_get.json()
+                            attrs = up_data.get("attributes", [])
+                            if not any(a.get("name") == "tenant_id" for a in attrs):
+                                attrs.append({
+                                    "name": "tenant_id",
+                                    "displayName": "Tenant Identifier",
+                                    "permissions": {"view": ["admin", "user"], "edit": ["admin"]},
+                                    "multivalued": False
+                                })
+                                up_data["attributes"] = attrs
+                                up_data["unmanagedAttributePolicy"] = "ENABLED"
+                                await client.put(f"{keycloak_url}/admin/realms/hms/users/profile", headers=headers, json=up_data, timeout=3.0)
+                    except Exception:
+                        pass
+
                     user_payload = {
                         "username": admin_contact.email,
                         "email": admin_contact.email,
