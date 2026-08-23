@@ -51,6 +51,9 @@ services:
     environment:
       ENV: development
       ALLOW_DEV_TOKENS: "true"
+      KEYCLOAK_URL: http://keycloak:8080
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin_password_change_me}
       OIDC_ISSUER: http://keycloak:8080/realms/hms
       OIDC_AUDIENCE: hms-web
       OIDC_JWKS_URI: http://keycloak:8080/realms/hms/protocol/openid-connect/certs

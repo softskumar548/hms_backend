@@ -162,7 +162,7 @@ async def provision_tenant(
         # Auto-provision real Keycloak user identity for Tenant Admin
         import os
         import httpx
-        keycloak_url = os.environ.get("KEYCLOAK_URL", "http://keycloak:8080" if os.path.exists("/.dockerenv") else "http://localhost:8080")
+        keycloak_url = os.environ.get("KEYCLOAK_URL", "http://keycloak:8080")
         admin_user = os.environ.get("KEYCLOAK_ADMIN", "admin")
         admin_pass = os.environ.get("KEYCLOAK_ADMIN_PASSWORD", "admin_password_change_me")
         gen_pass = f"Hms{body.id.capitalize()}#2026!"
@@ -555,7 +555,7 @@ async def invite_staff(
 
     # 2. Provision real Keycloak User Identity via Admin REST API
     keycloak_created = False
-    keycloak_url = os.environ.get("KEYCLOAK_URL", "http://keycloak:8080" if os.path.exists("/.dockerenv") else "http://localhost:8080")
+    keycloak_url = os.environ.get("KEYCLOAK_URL", "http://keycloak:8080")
     admin_user = os.environ.get("KEYCLOAK_ADMIN", "admin")
     admin_pass = os.environ.get("KEYCLOAK_ADMIN_PASSWORD", "admin_password_change_me")
 
