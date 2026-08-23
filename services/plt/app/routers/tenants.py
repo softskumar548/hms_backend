@@ -141,16 +141,17 @@ async def provision_tenant(
             )
         ).mappings().one()
 
-        # 3. Auto-provision designated Admin Contact as Tenant Admin practitioner
-        admin_contact = None
-        if body.admin_contact_target == "secondary" and body.secondary_contact:
-            admin_contact = body.secondary_contact
-        elif body.primary_contact:
-            admin_contact = body.primary_contact
+    # Auto-provision designated Admin Contact as Tenant Admin practitioner bound to target tenant context
+    admin_contact = None
+    if body.admin_contact_target == "secondary" and body.secondary_contact:
+        admin_contact = body.secondary_contact
+    elif body.primary_contact:
+        admin_contact = body.primary_contact
 
-        if admin_contact:
-            prac_id = f"prac_{body.id}_admin"
-            await s.execute(
+    if admin_contact:
+        prac_id = f"prac_{body.id}_admin"
+        async with tenant_session(session, ctx, tenant_id=body.id) as ts:
+            await ts.execute(
                 text(
                     "INSERT INTO practitioner (id, tenant_id, name, specialism) "
                     "VALUES (:id, :tid, :name, 'Tenant Administrator') "
@@ -158,6 +159,7 @@ async def provision_tenant(
                 ).bindparams(id=prac_id, tid=body.id, name=admin_contact.name)
             )
 
+    async with tenant_session(session, ctx) as s:
         await audit_record(
             session=s,
             ctx=ctx,
@@ -170,12 +172,12 @@ async def provision_tenant(
         return TenantOut(
             id=result["id"],
             name=result["name"],
-            region=result.get("region", body.region),
-            locale=result.get("locale", body.locale),
-            currency=result.get("currency", body.currency),
+            region=result["region"],
+            locale=result["locale"],
+            currency=result["currency"],
             status=result["status"],
-            is_synthetic=bool(result.get("is_synthetic", False)),
             features=feats,
+            is_synthetic=result.get("is_synthetic", False),
             created_at=result["created_at"],
         )
 
@@ -699,8 +701,8 @@ async def get_readiness_checklist(
         raw_svc = (await s.execute(text("SELECT COUNT(*) FROM service"))).scalar()
         svc_count = _to_int(raw_svc)
 
-        # Check genuine invited practitioners / enrolled staff exist (excluding wizard placeholder)
-        raw_prac = (await s.execute(text("SELECT COUNT(*) FROM practitioner WHERE id NOT LIKE 'prac_%_1'"))).scalar()
+        # Check genuine invited practitioners / enrolled staff exist (excluding placeholders and auto-admin)
+        raw_prac = (await s.execute(text("SELECT COUNT(*) FROM practitioner WHERE id NOT LIKE 'prac_%_1' AND id NOT LIKE 'prac_%_admin'"))).scalar()
         prac_count = _to_int(raw_prac)
 
         # Check patients exist
