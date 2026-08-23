@@ -199,7 +199,14 @@ async def get_context(
     if not tenant_id:
         tenant_id = payload.get("app.tenant_id") or payload.get("tenant_id") or payload.get("tenant")
     if not tenant_id:
-        raise HTTPException(status_code=401, detail="missing tenant identifier claim in token")
+        all_roles = (
+            payload.get("realm_access", {}).get("roles", [])
+            + (payload.get("roles") if isinstance(payload.get("roles"), list) else [])
+        )
+        if "operator" in all_roles or "admin" in all_roles:
+            tenant_id = "platform_operator"
+        else:
+            raise HTTPException(status_code=401, detail="missing tenant identifier claim in token")
 
     # Extract user identity (standard OIDC subject claim)
     user_id = payload.get("sub") or payload.get("preferred_username")
