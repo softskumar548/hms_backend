@@ -23,7 +23,7 @@ jobs:
 
       - name: Startup guard refusal check (NO DB SERVICE)
         env:
-          PYTHONPATH: libs
+          PYTHONPATH: libs:services/plt
         run: pytest -q tests/test_startup_guard.py
 
   test:
@@ -72,7 +72,7 @@ jobs:
           # Admin URL for provisioning tenants in conftest (INSERT on `tenant` is
           # not granted to hms_app — least privilege).
           SEED_DATABASE_URL: postgresql+asyncpg://postgres:postgres_change_me@localhost:5432/hms
-          PYTHONPATH: libs
+          PYTHONPATH: libs:services/plt
         run: pytest -q tests
 
   deploy-staging:
