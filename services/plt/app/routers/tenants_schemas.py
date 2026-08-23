@@ -227,5 +227,5 @@ class TenantOut(BaseModel):
     currency: str
     status: str
     is_synthetic: bool = False
-    features: dict[str, bool]
+    features: dict[str, Any]
     created_at: str | datetime
