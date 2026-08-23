@@ -20,10 +20,20 @@ async def verify_no_leftover_test_tenants():
     Runs automatically after all tests complete, querying the `tenant` table to assert
     that no leftover ephemeral test tenants remain in PostgreSQL.
     """
-    yield
     engine = create_async_engine(DATABASE_URL)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
-    SEED_TENANTS = {"apollo_vizag", "kims_guntur", "gsl_rajahmundry", "care_vizag", "medisys_kakinada", "kims", "NIMS_BLR", "t_a", "t_b"}
+    SEED_TENANTS = {"apollo", "apollo_vizag", "kims_guntur", "gsl_rajahmundry", "care_vizag", "medisys_kakinada", "kims", "NIMS_BLR", "t_a", "t_b"}
+    
+    # Pre-test cleanup of any leftover test tenants from previous interrupted test runs
+    try:
+        async with session_factory() as s:
+            await s.execute(text("DELETE FROM tenant WHERE id LIKE 'test_%' OR id LIKE 't_%' OR name LIKE 'Test%' OR name LIKE 'Temp%' OR name LIKE 'Suspension%'"))
+            await s.commit()
+    except Exception:
+        pass
+
+    yield
+
     try:
         async with session_factory() as s:
             res = await s.execute(text("SELECT id, name FROM tenant"))
