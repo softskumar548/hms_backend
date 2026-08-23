@@ -74,3 +74,23 @@ jobs:
           SEED_DATABASE_URL: postgresql+asyncpg://postgres:postgres_change_me@localhost:5432/hms
           PYTHONPATH: libs
         run: pytest -q tests
+
+  deploy-staging:
+    name: Deploy to Staging VPS
+    needs: [startup-guard, test]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH Remote Execute & Deploy
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          password: ${{ secrets.VPS_PASSWORD }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: 22
+          script: |
+            cd /opt/hms
+            git pull origin main
+            docker compose up -d --build
+
