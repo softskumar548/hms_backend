@@ -701,8 +701,8 @@ async def get_readiness_checklist(
         raw_svc = (await s.execute(text("SELECT COUNT(*) FROM service"))).scalar()
         svc_count = _to_int(raw_svc)
 
-        # Check genuine invited practitioners / enrolled staff exist (excluding placeholders and auto-admin)
-        raw_prac = (await s.execute(text("SELECT COUNT(*) FROM practitioner WHERE id NOT LIKE 'prac_%_1' AND id NOT LIKE 'prac_%_admin'"))).scalar()
+        # Check genuine invited practitioners / enrolled staff exist
+        raw_prac = (await s.execute(text("SELECT COUNT(*) FROM practitioner"))).scalar()
         prac_count = _to_int(raw_prac)
 
         # Check patients exist
