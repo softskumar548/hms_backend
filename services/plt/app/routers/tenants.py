@@ -159,6 +159,52 @@ async def provision_tenant(
                 ).bindparams(id=prac_id, tid=body.id, name=admin_contact.name)
             )
 
+        # Auto-provision real Keycloak user identity for Tenant Admin
+        import os
+        import httpx
+        keycloak_url = os.environ.get("KEYCLOAK_URL", "http://keycloak:8080" if os.path.exists("/.dockerenv") else "http://localhost:8080")
+        admin_user = os.environ.get("KEYCLOAK_ADMIN", "admin")
+        admin_pass = os.environ.get("KEYCLOAK_ADMIN_PASSWORD", "admin_password_change_me")
+        gen_pass = f"Hms{body.id.capitalize()}#2026!"
+        name_parts = admin_contact.name.strip().split(" ", 1)
+        given_name = name_parts[0]
+        family_name = name_parts[1] if len(name_parts) > 1 else "Admin"
+
+        try:
+            async with httpx.AsyncClient() as client:
+                tok_resp = await client.post(
+                    f"{keycloak_url}/realms/master/protocol/openid-connect/token",
+                    data={"client_id": "admin-cli", "grant_type": "password", "username": admin_user, "password": admin_pass},
+                    timeout=5.0,
+                )
+                if tok_resp.status_code == 200:
+                    admin_token = tok_resp.json()["access_token"]
+                    headers = {"Authorization": f"Bearer {admin_token}", "Content-Type": "application/json"}
+                    user_payload = {
+                        "username": admin_contact.email,
+                        "email": admin_contact.email,
+                        "firstName": given_name,
+                        "lastName": family_name,
+                        "enabled": True,
+                        "emailVerified": True,
+                        "attributes": {"tenant_id": [body.id]},
+                        "credentials": [{"type": "password", "value": gen_pass, "temporary": False}],
+                    }
+                    cr_resp = await client.post(f"{keycloak_url}/admin/realms/hms/users", headers=headers, json=user_payload, timeout=5.0)
+                    if cr_resp.status_code in (201, 409):
+                        gu_resp = await client.get(f"{keycloak_url}/admin/realms/hms/users?username={admin_contact.email}", headers=headers, timeout=5.0)
+                        if gu_resp.status_code == 200 and gu_resp.json():
+                            uid = gu_resp.json()[0]["id"]
+                            u_obj = gu_resp.json()[0]
+                            u_obj["attributes"] = {"tenant_id": [body.id]}
+                            await client.put(f"{keycloak_url}/admin/realms/hms/users/{uid}", headers=headers, json=u_obj, timeout=5.0)
+
+                            role_resp = await client.get(f"{keycloak_url}/admin/realms/hms/roles/admin", headers=headers, timeout=5.0)
+                            if role_resp.status_code == 200:
+                                await client.post(f"{keycloak_url}/admin/realms/hms/users/{uid}/role-mappings/realm", headers=headers, json=[role_resp.json()], timeout=5.0)
+        except Exception as kc_err:
+            print(f"Keycloak tenant admin auto-provisioning notice: {kc_err}")
+
     async with tenant_session(session, ctx) as s:
         await audit_record(
             session=s,
