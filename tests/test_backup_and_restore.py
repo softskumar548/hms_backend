@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy import text
 
 DB_USER = os.environ.get("POSTGRES_USER", "postgres")
-DB_HOST = os.environ.get("POSTGRES_HOST", "localhost")
+DB_HOST = os.environ.get("POSTGRES_HOST", "postgres" if os.path.exists("/.dockerenv") else "localhost")
 DB_PORT = os.environ.get("POSTGRES_PORT", "5432")
 DB_NAME = os.environ.get("POSTGRES_DB", "hms")
 PASSPHRASE = os.environ.get("BACKUP_PASSPHRASE", "hms_india_vps_backup_secret_2026")
