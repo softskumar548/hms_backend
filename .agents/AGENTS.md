@@ -47,9 +47,9 @@ Every requirement has an ID (`PLT-002`, `REG-001`, `IAM-006`, `TEN-101`, `REF-06
   accepted ONLY when `ALLOW_DEV_TOKENS=true` or `ENV=development`. They are rejected
   everywhere else with an `AUTH_FAILURE:` audit log. Do not build new features that
   assume dev tokens; do not widen this gate.
-- **Staging deployment (`staging.hms.zensynq.com`) is NOT live** — DNS/TLS/VPS
-  provisioning is pending infra. Anything claiming staging works must be verified
-  from OUTSIDE the VPS before it's believed.
+- **Staging deployment (`stage.zensynq.com` / `103.174.103.158`): LIVE & ACTIVE** —
+  DNS A-record configured, Let's Encrypt TLS active, Nginx HTTPS reverse proxy live,
+  and automated GitHub Actions CI/CD workflows active for backend and frontend.
 
 ---
 
@@ -250,8 +250,7 @@ partially done. The standard is therefore explicit:
 
 ## 11. Standing open items (keep visible until closed)
 
-- **D5 — staging not live**: `staging.hms.zensynq.com` needs DNS + VPS deploy + TLS,
-  verified with `curl -I` from outside the VPS. Blocks the client demo, not dev work.
+- **D5 — staging live**: `stage.zensynq.com` (`103.174.103.158`) is provisioned with Let's Encrypt TLS, Nginx reverse proxy, and automated GitHub Actions CD pipelines for backend and frontend.
 - **Readiness engine**: COMPLETED — evaluates all 6 specified hard-stop criteria (`T1-03`).
 - **FHIR export timestamp**: `exported_at` appeared stale/hardcoded in a walkthrough —
   confirm it uses generation time.
