@@ -30,6 +30,22 @@ def test_operator_token_sentinel_fails_closed_on_tenant_data_endpoints():
     apollo_headers = {"Authorization": "Bearer dev.apollo.physician"}
     resp_apollo = client.get("/patients", headers=apollo_headers)
     assert resp_apollo.status_code == 200
+
+    if len(resp_apollo.json()) == 0:
+        # Self-seed a test patient for apollo if database was not pre-seeded
+        client.post(
+            "/patients",
+            json={
+                "given_name": "ApolloTest",
+                "family_name": "Patient",
+                "gender": "male",
+                "dob": "1990-01-01",
+                "phone": "+919876543210"
+            },
+            headers=apollo_headers
+        )
+        resp_apollo = client.get("/patients", headers=apollo_headers)
+
     assert len(resp_apollo.json()) >= 1, "Apollo physician should see apollo patients"
 
 

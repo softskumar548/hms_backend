@@ -30,8 +30,8 @@ def _load_env_file() -> None:
                         if "=" in line:
                             k, v = line.split("=", 1)
                             os.environ.setdefault(k.strip(), v.strip())
-            except Exception:
-                pass
+            except (IOError, OSError) as e:
+                logger.debug("Could not load .env file: %s", e)
             break
 
 DATABASE_URL = os.environ.get(

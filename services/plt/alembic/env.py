@@ -34,7 +34,7 @@ def _load_env_file() -> None:
                         if "=" in line:
                             k, v = line.split("=", 1)
                             os.environ.setdefault(k.strip(), v.strip())
-            except Exception:
+            except (IOError, OSError):
                 pass
             break
 
