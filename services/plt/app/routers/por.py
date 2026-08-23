@@ -126,7 +126,7 @@ async def list_portal_visits(
     async with tenant_session(session, ctx) as s:
         query = (
             "SELECT a.id, a.patient_id, a.practitioner_id, a.site_id, a.room_id, a.service_id, "
-            "a.status, a.start_time, a.end_time, p.first_name, p.last_name, s.name as service_name, "
+            "a.status, a.start_time, a.end_time, p.given_name, p.family_name, s.name as service_name, "
             "pr.name as practitioner_name "
             "FROM appointment a "
             "LEFT JOIN patient p ON a.patient_id = p.id "
@@ -154,7 +154,7 @@ async def list_portal_visits(
                 )
             ).mappings().all()
 
-            patient_display = f"{app.get('first_name', '')} {app.get('last_name', '')}".strip()
+            patient_display = f"{app.get('given_name', '')} {app.get('family_name', '')}".strip()
             results.append({
                 "id": str(app["id"]),
                 "patient_id": str(app["patient_id"]),
