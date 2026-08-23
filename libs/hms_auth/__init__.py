@@ -167,8 +167,14 @@ async def get_context(
                 "http://localhost:8080/realms/hms",
                 "http://127.0.0.1:8080/realms/hms",
                 "http://keycloak:8080/realms/hms",
+                "https://stage.zensynq.com/auth/realms/hms",
+                "https://stage.zensynq.com/realms/hms",
+                "http://stage.zensynq.com/auth/realms/hms",
+                "http://stage.zensynq.com/realms/hms",
             ]
-            if iss not in valid_issuers:
+            if iss and (iss in valid_issuers or iss.endswith("/realms/hms")):
+                pass
+            else:
                 raise jwt.InvalidIssuerError(f"Invalid issuer: {iss}")
 
         # Verify audience (aud claim or authorized party azp claim)
