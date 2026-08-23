@@ -7,6 +7,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch: {}
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -81,7 +82,7 @@ jobs:
   deploy-staging:
     name: Deploy to Staging VPS
     needs: [startup-guard, test]
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     steps:
       - name: SSH Remote Execute & Deploy
@@ -105,6 +106,8 @@ jobs:
                 git pull origin main
               fi
             fi
-            docker compose up -d --build
-            docker compose restart nginx keycloak
+            docker compose up -d --build --remove-orphans
+            sleep 5
+            docker compose up -d --force-recreate nginx
+            docker compose ps
 
