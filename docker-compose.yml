@@ -31,7 +31,6 @@ services:
       KC_DB_USERNAME: postgres
       KC_DB_PASSWORD: ${POSTGRES_PASSWORD:-postgres_change_me}
       KC_HEALTH_ENABLED: "true"
-      KC_HTTP_RELATIVE_PATH: /auth
       KC_PROXY_HEADERS: xforwarded
       KC_HTTP_ENABLED: "true"
     volumes:
