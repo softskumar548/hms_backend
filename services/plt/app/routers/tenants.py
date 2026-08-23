@@ -112,34 +112,48 @@ async def provision_tenant(
         # Check if tenant ID already exists
         existing = (
             await s.execute(
-                text("SELECT id FROM tenant WHERE id = :id").bindparams(id=body.id)
+                text("SELECT id, status FROM tenant WHERE id = :id").bindparams(id=body.id)
             )
         ).mappings().one_or_none()
 
         if existing:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"Tenant ID '{body.id}' already exists",
-            )
-
-        # Insert new tenant record with status='provisioned'
-        result = (
-            await s.execute(
-                text(
-                    "INSERT INTO tenant (id, name, region, locale, currency, features, status, is_synthetic) "
-                    "VALUES (:id, :name, :region, :locale, :currency, CAST(:features AS jsonb), 'provisioned', :is_synthetic) "
-                    "RETURNING id, name, region, locale, currency, features, status, is_synthetic, created_at"
-                ).bindparams(
-                    id=body.id,
-                    name=body.name,
-                    region=body.region,
-                    locale=body.locale,
-                    currency=body.currency,
-                    features=json.dumps(features_dict),
-                    is_synthetic=body.is_synthetic,
+            # Update existing tenant record and features
+            result = (
+                await s.execute(
+                    text(
+                        "UPDATE tenant SET name = :name, region = :region, locale = :locale, "
+                        "currency = :currency, features = CAST(:features AS jsonb) "
+                        "WHERE id = :id "
+                        "RETURNING id, name, region, locale, currency, features, status, is_synthetic, created_at"
+                    ).bindparams(
+                        id=body.id,
+                        name=body.name,
+                        region=body.region,
+                        locale=body.locale,
+                        currency=body.currency,
+                        features=json.dumps(features_dict),
+                    )
                 )
-            )
-        ).mappings().one()
+            ).mappings().one()
+        else:
+            # Insert new tenant record with status='provisioned'
+            result = (
+                await s.execute(
+                    text(
+                        "INSERT INTO tenant (id, name, region, locale, currency, features, status, is_synthetic) "
+                        "VALUES (:id, :name, :region, :locale, :currency, CAST(:features AS jsonb), 'provisioned', :is_synthetic) "
+                        "RETURNING id, name, region, locale, currency, features, status, is_synthetic, created_at"
+                    ).bindparams(
+                        id=body.id,
+                        name=body.name,
+                        region=body.region,
+                        locale=body.locale,
+                        currency=body.currency,
+                        features=json.dumps(features_dict),
+                        is_synthetic=body.is_synthetic,
+                    )
+                )
+            ).mappings().one()
 
     # Auto-provision designated Admin Contact as Tenant Admin practitioner bound to target tenant context
     admin_contact = None
@@ -198,6 +212,14 @@ async def provision_tenant(
                             u_obj = gu_resp.json()[0]
                             u_obj["attributes"] = {"tenant_id": [body.id]}
                             await client.put(f"{keycloak_url}/admin/realms/hms/users/{uid}", headers=headers, json=u_obj, timeout=5.0)
+
+                            # Ensure password is set to gen_pass
+                            await client.put(
+                                f"{keycloak_url}/admin/realms/hms/users/{uid}/reset-password",
+                                headers=headers,
+                                json={"type": "password", "value": gen_pass, "temporary": False},
+                                timeout=5.0,
+                            )
 
                             role_resp = await client.get(f"{keycloak_url}/admin/realms/hms/roles/admin", headers=headers, timeout=5.0)
                             if role_resp.status_code == 200:
