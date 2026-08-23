@@ -41,8 +41,11 @@ async def test_mock_db_flag_rejected_outside_test_env(monkeypatch):
     monkeypatch.setenv("ENV", "production")
     from app.db_guard import DatabaseSafetyError, verify_database_safety
 
-    with pytest.raises(DatabaseSafetyError):
-        await verify_database_safety()
+    try:
+        with pytest.raises(DatabaseSafetyError):
+            await verify_database_safety()
+    finally:
+        monkeypatch.undo()
 
 
 def test_mock_session_not_importable_from_runtime():
