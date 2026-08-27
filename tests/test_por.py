@@ -81,8 +81,8 @@ def test_activate_incorrect_otp(db_session):
 
     response = client.post(
         "/por/activate",
-        headers={"Authorization": "Bearer dev.apollo.receptionist"},
         json={
+            "tenant_id": "apollo",
             "invitation_id": "11111111-2222-3333-4444-555555555555",
             "otp_code": "999999",  # Incorrect code
             "username": "patient_user",
@@ -92,6 +92,73 @@ def test_activate_incorrect_otp(db_session):
 
     assert response.status_code == 400
     assert "Incorrect OTP" in response.text
+
+
+def test_activate_unauthenticated_missing_tenant_fails_closed(db_session):
+    """BUG-POR-001: Test unauthenticated activation fails closed when tenant is not specified."""
+    response = client.post(
+        "/por/activate",
+        json={
+            "invitation_id": "11111111-2222-3333-4444-555555555555",
+            "otp_code": "123456",
+            "username": "patient_user",
+            "password": "securepassword"
+        }
+    )
+    assert response.status_code == 400
+    assert "Tenant ID is required" in response.json()["detail"]
+
+
+def test_activate_unauthenticated_wrong_tenant_or_invite_fails_closed(db_session):
+    """BUG-POR-001: Test unauthenticated activation with non-existent or cross-tenant invite fails closed (404)."""
+    mock_invite_select = MagicMock()
+    mock_invite_select.mappings.return_value.one_or_none.return_value = None
+
+    # Executes: SET LOCAL, SELECT invitation -> None (RLS isolation)
+    db_session.execute.side_effect = [AsyncMock(), mock_invite_select]
+
+    response = client.post(
+        "/por/activate",
+        json={
+            "tenant_id": "kims",
+            "invitation_id": "11111111-2222-3333-4444-555555555555",
+            "otp_code": "123456",
+            "username": "patient_user",
+            "password": "securepassword"
+        }
+    )
+    assert response.status_code == 404
+    assert "Invitation not found" in response.json()["detail"]
+
+
+def test_activate_unauthenticated_success(db_session):
+    """BUG-POR-001: Test unauthenticated patient can successfully activate with target tenant and valid OTP."""
+    mock_invite_select = MagicMock()
+    mock_invite_select.mappings.return_value.one_or_none.return_value = {
+        "patient_id": "22222222-3333-4444-5555-666666666666",
+        "otp_code": "123456",
+        "expires_at": datetime.now() + timedelta(minutes=15),
+        "status": "pending"
+    }
+
+    # Executes: SET LOCAL, SELECT invitation, INSERT portal_user, UPDATE invitation status
+    db_session.execute.side_effect = [
+        AsyncMock(), mock_invite_select, AsyncMock(), AsyncMock()
+    ]
+
+    response = client.post(
+        "/por/activate",
+        json={
+            "tenant_id": "apollo",
+            "invitation_id": "11111111-2222-3333-4444-555555555555",
+            "otp_code": "123456",
+            "username": "patient_user",
+            "password": "securepassword"
+        }
+    )
+
+    assert response.status_code == 201
+    assert "activated successfully" in response.json()["message"]
 
 
 def test_activate_success(db_session):

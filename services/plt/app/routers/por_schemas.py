@@ -27,6 +27,7 @@ class ActivationSubmit(BaseModel):
     otp_code: str = Field(min_length=1)
     username: str = Field(min_length=1)
     password: str = Field(min_length=6)
+    tenant_id: Optional[str] = None
 
 
 class AppointmentSelfBook(BaseModel):

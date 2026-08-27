@@ -66,12 +66,35 @@ async def generate_invitation(
 @router.post("/activate", status_code=201)
 async def activate_account(
     body: ActivationSubmit,
-    ctx: RequestContext = Depends(auth),
+    request: Request,
     session: AsyncSession = Depends(get_session)
 ):
-    """Binds invitation with password to create patient portal user (POR-001)."""
-    async with tenant_session(session, ctx) as s:
-        # 1. Fetch invitation
+    """Binds invitation with password to create patient portal user (POR-001 / BUG-POR-001)."""
+    target_tenant_id = body.tenant_id
+    if not target_tenant_id:
+        auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
+        if auth_header:
+            try:
+                ctx = await auth(request, authorization=auth_header)
+                target_tenant_id = ctx.tenant_id
+            except Exception:
+                pass
+
+    if not target_tenant_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Tenant ID is required for portal account activation."
+        )
+
+    # Establish tenant-isolated session bound to target_tenant_id
+    activation_ctx = RequestContext(
+        tenant_id=target_tenant_id,
+        user_id="portal_activation_guest",
+        role="patient"
+    )
+
+    async with tenant_session(session, activation_ctx, tenant_id=target_tenant_id) as s:
+        # 1. Fetch invitation within tenant RLS scope
         invite = (
             await s.execute(
                 text(
@@ -94,14 +117,14 @@ async def activate_account(
             await s.commit()
             raise HTTPException(status_code=400, detail="Activation invitation has expired.")
 
-        # 2. Insert portal user
+        # 2. Insert portal user scoped to target_tenant_id
         dummy_hash = f"hashed_pwd_{body.password}" # Mock hash for validation
         await s.execute(
             text(
                 "INSERT INTO portal_user (tenant_id, patient_id, username, password_hash, active) "
                 "VALUES (:tid, :patient_id, :username, :hash, TRUE)"
             ).bindparams(
-                tid=ctx.tenant_id, patient_id=invite["patient_id"], username=body.username, hash=dummy_hash
+                tid=target_tenant_id, patient_id=invite["patient_id"], username=body.username, hash=dummy_hash
             )
         )
 

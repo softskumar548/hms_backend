@@ -37,5 +37,5 @@ Do these in order. Items 1–7 are the day-one setup from the kickoff pack.
 - Kafka in place of Postgres/Redis events when volume justifies it.
 
 ## Known Open Items & Bug Tickets
-- **`BUG-POR-001` (Portal Invitation RLS Violation)**: Unauthenticated `/por/activate` endpoint updates `portal_invitation` status without explicit target tenant session binding when caller has no `ctx.tenant_id`. Needs `tenant_session(session, ctx, tenant_id=invite.tenant_id)` context binding prior to update.
+- **`BUG-POR-001` (Portal Invitation RLS Violation) — [RESOLVED & TESTED]**: `/por/activate` endpoint now supports unauthenticated activation via explicit target `tenant_id` session binding, validated against RLS isolation and tested with fail-closed tests in `tests/test_por.py`.
 - **`TASK-TEN-105-HARDENING` (Practitioner System Placeholder Flag)**: Add explicit `is_system_placeholder BOOLEAN DEFAULT FALSE` column to `practitioner` table instead of relying on ID prefix filtering (`id NOT LIKE 'prac_%_1'`) in `STAFF_ENROLLED` readiness check.

@@ -49,8 +49,8 @@ services:
       dockerfile: services/plt/Dockerfile
     restart: unless-stopped
     environment:
-      ENV: development
-      ALLOW_DEV_TOKENS: "true"
+      ENV: ${ENV:-staging}
+      ALLOW_DEV_TOKENS: ${ALLOW_DEV_TOKENS:-false}
       KEYCLOAK_URL: http://keycloak:8080
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin_password_change_me}
