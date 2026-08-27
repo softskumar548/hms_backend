@@ -8,18 +8,26 @@ TenantStatus = Literal["draft", "provisioned", "configured", "active", "suspende
 
 
 class ContactInfo(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     name: str = Field(..., min_length=2)
     phone: str = Field(..., min_length=5)
     email: str = Field(..., min_length=3)
     designation: str = Field(default="Administrator")
+    aadhaar: str | None = Field(default=None, description="12-digit Indian Aadhaar ID")
+    landline: str | None = Field(default=None, description="Contact landline with STD and extension")
 
 
 class ContractAttestation(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     document_filename: str | None = Field(default=None)
     signatory_name: str = Field(..., min_length=2)
     signatory_designation: str = Field(default="Authorized Signatory")
     signatory_phone: str = Field(..., min_length=5)
     signatory_email: str = Field(..., min_length=3)
+    signatory_aadhaar: str | None = Field(default=None, description="Signatory 12-digit Aadhaar ID")
+    signatory_landline: str | None = Field(default=None, description="Signatory landline")
 
 
 class TenantCreate(BaseModel):

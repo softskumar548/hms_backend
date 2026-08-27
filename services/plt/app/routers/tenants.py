@@ -67,13 +67,21 @@ async def provision_tenant(
         sig_name = body.contract_attestation.signatory_name.lower().strip()
         sig_email = body.contract_attestation.signatory_email.lower().strip()
         sig_phone = body.contract_attestation.signatory_phone.strip()
+        sig_aadhaar = (body.contract_attestation.signatory_aadhaar or "").strip()
 
         prim_match = False
         if body.primary_contact:
             p_name = body.primary_contact.name.lower().strip()
             p_email = body.primary_contact.email.lower().strip()
             p_phone = body.primary_contact.phone.strip()
-            if sig_email == p_email or sig_phone == p_phone or sig_name in p_name or p_name in sig_name:
+            p_aadhaar = (body.primary_contact.aadhaar or "").strip()
+            if (
+                sig_email == p_email
+                or sig_phone == p_phone
+                or (sig_aadhaar and sig_aadhaar == p_aadhaar)
+                or sig_name in p_name
+                or p_name in sig_name
+            ):
                 prim_match = True
 
         sec_match = False
@@ -81,7 +89,14 @@ async def provision_tenant(
             s_name = body.secondary_contact.name.lower().strip()
             s_email = body.secondary_contact.email.lower().strip()
             s_phone = body.secondary_contact.phone.strip()
-            if sig_email == s_email or sig_phone == s_phone or sig_name in s_name or s_name in sig_name:
+            s_aadhaar = (body.secondary_contact.aadhaar or "").strip()
+            if (
+                sig_email == s_email
+                or sig_phone == s_phone
+                or (sig_aadhaar and sig_aadhaar == s_aadhaar)
+                or sig_name in s_name
+                or s_name in sig_name
+            ):
                 sec_match = True
 
         if not (prim_match or sec_match):

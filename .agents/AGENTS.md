@@ -30,17 +30,20 @@ Every requirement has an ID (`PLT-002`, `REG-001`, `IAM-006`, `TEN-101`, `REF-06
 
 - **Foundation, all 9 modules, tenant onboarding (TEN-101…205): built and passing**
   against real Postgres with RLS. Full suite currently 79 passing. Enhanced tenant
-  provisioning API now captures primary/secondary contact info, validates contract
-  signatory details, and auto-provisions designated Tenant Admin practitioners.
+  provisioning API captures primary/secondary contacts with 12-digit Aadhaar ID,
+  structured physical address (`door_no`, `address_line1`, `address_line2`, `city`, `state`, `pin_code`, `country`),
+  landline extension telephony, validates contract signatory details via Aadhaar/Email/Phone matching,
+  and auto-provisions designated Tenant Admin practitioners and Keycloak identities.
 - **Sprint E4 — Platform Control Center & Billing Ops (TEN-301…304): BUILT & LIVE**
   - Subscription status tracking & invoicing (`TEN-301`).
   - Suspension lifecycle & reactivation (`TEN-303`).
   - Operator emergency overrides & break-glass audit logs (`TEN-304`).
-  - Operator Console UI (`hms-web`) with tenant roster, KPI cards, and override controls.
+  - Operator Console UI (`hms-web`) with tenant roster, KPI cards, override controls, and `/operator/profile` management.
 - **Readiness Engine & Safe Offboarding (T1-03, T3-01): BUILT & LIVE**
   - Full 6-check setup readiness evaluation engine with badge rendering in UI.
   - Dynamic topological cascade engine for safe tenant offboarding with UI modal safeguards.
 - **Frontend Architecture & UX Revamp (Client Redesign — LIVE & ACTIVE):**
+  - **Operator Tenant Onboarding Wizard (`/onboarding`)**: Streamlined 2-stage pipeline with real-time slug availability check, vertical single-column layout, sequential `Tab` and `Enter` key progression, searchable & creatable `DesignationCombobox`, 12-digit Aadhaar validation, error auto-scroll engine, and minimalist styling.
   - **Header Right Controls**: Live ticking clock (`DD MMM YYYY - HH:MM AM/PM`), `EN / TE` language toggle, and circular Profile Avatar dropdown menu (Dean/Admin details, account links, logout).
   - **Collapsible Sidebar Navigation (`AppSidebar`)**: 240px expanded / 72px collapsed modes with smooth transitions.
   - **Tenant Admin Role IA**: Clean, executive navigation with 📊 **Dashboard** (Welcome Banner, site selector, live refresh, KPI cards without tour checklist) and 👥 **Admin** collapsible menu.
@@ -93,8 +96,14 @@ Project memory for AI AGENTS and the source of truth for how this UI is built.
 ## 1.1 Header & Sidebar Layout
 - **Sticky Header**: Displays brand logo left, and right-aligned live clock (`DD MMM YYYY - HH:MM AM/PM`), tenant·role badge, language selector (`EN / TE`), and interactive Profile Avatar (`👤`) dropdown.
 - **Collapsible Sidebar (`AppSidebar`)**: Replaces flat top navigation. Supports expanded (240px) and collapsed icon-only (72px) states with tooltips and active left indicator.
+- **Universal ESC & Click-Outside Dismissals**: Applied across profile dropdown, modal dialogs, and drawer menus.
 
-## 1.2 Tenant Admin Navigation Architecture
+## 1.2 Platform Operator Console & Tenant Onboarding Pipeline (TEN-101 / TEN-301)
+- 📋 **Tenant Fleet**: Live search, status filters, setup readiness badges, and safe cascade offboarding safeguards.
+- ⚡ **Onboarding Wizard (`/onboarding`)**: Streamlined 2-stage onboarding pipeline with real-time slug availability check, vertical single-column layout, sequential `Tab` and `Enter` key progression, searchable & creatable `DesignationCombobox`, 12-digit Aadhaar validation, error auto-scroll engine, and minimalist styling.
+- 👤 **Operator Profile & Security (`/operator/profile`)**: Dedicated operator details and password reset tabs.
+
+## 1.3 Tenant Admin Navigation Architecture
 - 📊 **Dashboard** (`/dashboard`): Executive Welcome Banner with Dean details & clinic name, facility site filter, live refresh counter, and KPI metric cards (`Today's Consultations`, `Avg Wait Time`, `No-Shows`, `Cashier Till Revenue`). Seeded tour checklist is omitted.
 - 👥 **Admin (Expandable Accordion)**:
   - ⚙️ **Configuration** (`/settings?tab=config`): Master dropdown-driven configuration view (Payment Type, Visit Type, Order Status, Clinic Type, Specialization, Room Type, Floor Type, Bed Category, Expense Category) with dynamic item table & modal forms.
@@ -104,7 +113,7 @@ Project memory for AI AGENTS and the source of truth for how this UI is built.
   - 💳 **Payment** (`/settings?tab=payment`): Payment collection rails, daily till reconciliation limits, PMJAY 100% cashless rules.
   - 🌐 **Online Services** (`/settings?tab=online`): ABDM ABHA milestones, Telehealth switches, and SMS/WhatsApp gateway.
 
-## 1.3 Clinical Staff Navigation
+## 1.4 Clinical Staff Navigation
 - **Receptionist**: Live Queue / Check-in board (`/queue`), Patients (`/patients`), Scheduling (`/scheduling`).
 - **Physician / Nurse**: My Schedule (`/my-schedule`), Live Queue (`/queue`), EMR / Notes (`/emr`).
 - **Biller**: Invoices (`/billing`), Payment Till, Referral Analytics (`/reports/referrals`).
