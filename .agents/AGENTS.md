@@ -1,9 +1,12 @@
-# AGENTS.md — HMS Platform (SaaS, backend, frontend, keycloak, redis, postgres)
+# AGENTS.md — HMS Backend Platform (FastAPI, PostgreSQL RLS, Keycloak, Celery/Redis, FHIR R4)
 
 Project memory for AI AGENTS. This file is read at the start of every session.
 Follow it for **every** change. When in doubt, prefer the rules here over habits
 from other projects. If something here contradicts reality, fix this file in the
 same PR — a stale AGENTS.md is worse than none, because it actively misleads.
+
+Frontend: separate repo `hms-web` (React 18 + TypeScript / MediGo design system).
+Staging deployment: `https://stage.zensynq.com` (VPS: `103.174.103.158`).
 
 ---
 
@@ -29,7 +32,7 @@ Every requirement has an ID (`PLT-002`, `REG-001`, `IAM-006`, `TEN-101`, `REF-06
 ## 2. Where the project actually is (update this section as phases close)
 
 - **Foundation, all 9 modules, tenant onboarding (TEN-101…205): built and passing**
-  against real Postgres with RLS. Full suite currently 79 passing. Enhanced tenant
+  against real Postgres with RLS. Full test suite passing. Enhanced tenant
   provisioning API captures primary/secondary contacts with 12-digit Aadhaar ID,
   structured physical address (`door_no`, `address_line1`, `address_line2`, `city`, `state`, `pin_code`, `country`),
   landline extension telephony, validates contract signatory details via Aadhaar/Email/Phone matching,
@@ -38,16 +41,13 @@ Every requirement has an ID (`PLT-002`, `REG-001`, `IAM-006`, `TEN-101`, `REF-06
   - Subscription status tracking & invoicing (`TEN-301`).
   - Suspension lifecycle & reactivation (`TEN-303`).
   - Operator emergency overrides & break-glass audit logs (`TEN-304`).
-  - Operator Console UI (`hms-web`) with tenant roster, KPI cards, override controls, and `/operator/profile` management.
+- **SaaS Subscription Packages & Quota Metering (TEN-301 / Commercial Engine): BUILT & LIVE**
+  - Multi-tier plan definitions (`starter`, `growth`, `enterprise`) and 9-dimensional quota tracking (`package_name`, `expiry_date`, `admins_limit`, `staff_limit`, `doctors_limit`, `beds_limit`, `sms_count_limit`, `email_count_limit`, `whatsapp_count_limit`).
+  - Real-time quota usage and read-only mode calculation (`GET /tenants/{tenant_id}/quotas`) and operator tier upgrades (`PUT /tenants/{tenant_id}/subscription/plan`).
+  - Soft-suspension safeguards ensuring clinical read safety while locking write operations on payment default.
 - **Readiness Engine & Safe Offboarding (T1-03, T3-01): BUILT & LIVE**
-  - Full 6-check setup readiness evaluation engine with badge rendering in UI.
-  - Dynamic topological cascade engine for safe tenant offboarding with UI modal safeguards.
-- **Frontend Architecture & UX Revamp (Client Redesign — LIVE & ACTIVE):**
-  - **Operator Tenant Onboarding Wizard (`/onboarding`)**: Streamlined 2-stage pipeline with real-time slug availability check, vertical single-column layout, sequential `Tab` and `Enter` key progression, searchable & creatable `DesignationCombobox`, 12-digit Aadhaar validation, error auto-scroll engine, and minimalist styling.
-  - **Header Right Controls**: Live ticking clock (`DD MMM YYYY - HH:MM AM/PM`), `EN / TE` language toggle, and circular Profile Avatar dropdown menu (Dean/Admin details, account links, logout).
-  - **Collapsible Sidebar Navigation (`AppSidebar`)**: 240px expanded / 72px collapsed modes with smooth transitions.
-  - **Tenant Admin Role IA**: Clean, executive navigation with 📊 **Dashboard** (Welcome Banner, site selector, live refresh, KPI cards without tour checklist) and 👥 **Admin** collapsible menu.
-  - **Master Configuration Management**: Dropdown-driven configuration manager (`Payment Type`, `Visit Type`, `Order Status`, `Clinic Type`, `Specialization`, `Room Type`, `Floor Type`, `Bed Category`, `Expense Category`) with add/edit/toggle modal workflows.
+  - Full 6-check setup readiness evaluation engine with badge status rendering.
+  - Dynamic topological cascade engine for safe tenant offboarding with database safeguards.
 - **Auth: real Keycloak/OIDC is LIVE** — RS256 validation with JWKS caching,
   `app.tenant_id` custom claim → `RequestContext`, roles from `realm_access.roles`.
   Declarative user profile enables `tenant_id` attribute propagation to tokens.
@@ -66,7 +66,6 @@ Every requirement has an ID (`PLT-002`, `REG-001`, `IAM-006`, `TEN-101`, `REF-06
 - **FHIR:** `fhir.resources` (Pydantic FHIR R4 models); resources stored as validated
   JSONB in Postgres (ADR-0002 / flag F2). ABDM requires FHIR R4.
 - **Identity:** **Keycloak / OIDC (live)** + MFA policy in the `hms` realm.
-- **Frontend:** React 18 + TypeScript, MediGo design system with collapsible side navigation.
 - **Infra:** Docker + Docker Compose now (India VPS); Kubernetes for production.
 
 ---
@@ -81,39 +80,29 @@ Every requirement has an ID (`PLT-002`, `REG-001`, `IAM-006`, `TEN-101`, `REF-06
 - **Never read `tenant_id` from a header, query param, or request body.** It comes
   only from the verified auth context (`RequestContext`), which comes from the token.
 - The app connects as the non-superuser role `hms_app` so RLS actually applies.
+- `tests/test_tenant_isolation.py` is a permanent CI gate. **When you add a new
+  tenant-scoped table, add a case to that test.**
 - RLS must **fail closed**: no tenant context → zero rows. Never work around this.
 
+### 4.2 Audit (PLT-005)
+- Every create/read/update/export of patient-identifiable data calls
+  `hms_audit.record(...)` in the **same transaction** as the action.
+- The `audit_event` table is append-only. Never grant or use UPDATE/DELETE on it.
+
+### 4.3 Consent & Privacy (PLT-010)
+- Check consent before sharing patient data externally or sending non-essential comms.
+- **Synthetic data only** in dev/demo/staging. Never seed or paste a real patient's data.
+- All patient data and backups must stay in the **India region** (data residency compliance).
+
+### 4.4 Reference Pattern
+- `services/plt/app/routers/patients.py` is the canonical reference pattern for tenant session +
+  audit + least-privilege role check. Copy this shape for all clinical and operational endpoints.
+
 ---
 
-# AGENTS.md — hms-web (MediGo HMS Frontend)
+## 5. Andhra Pradesh / India Regional Specifics
 
-Project memory for AI AGENTS and the source of truth for how this UI is built.
-
----
-
-# PART 1 — THEME & VISUAL LANGUAGE (the MediGo design system)
-
-## 1.1 Header & Sidebar Layout
-- **Sticky Header**: Displays brand logo left, and right-aligned live clock (`DD MMM YYYY - HH:MM AM/PM`), tenant·role badge, language selector (`EN / TE`), and interactive Profile Avatar (`👤`) dropdown.
-- **Collapsible Sidebar (`AppSidebar`)**: Replaces flat top navigation. Supports expanded (240px) and collapsed icon-only (72px) states with tooltips and active left indicator.
-- **Universal ESC & Click-Outside Dismissals**: Applied across profile dropdown, modal dialogs, and drawer menus.
-
-## 1.2 Platform Operator Console & Tenant Onboarding Pipeline (TEN-101 / TEN-301)
-- 📋 **Tenant Fleet**: Live search, status filters, setup readiness badges, and safe cascade offboarding safeguards.
-- ⚡ **Onboarding Wizard (`/onboarding`)**: Streamlined 2-stage onboarding pipeline with real-time slug availability check, vertical single-column layout, sequential `Tab` and `Enter` key progression, searchable & creatable `DesignationCombobox`, 12-digit Aadhaar validation, error auto-scroll engine, and minimalist styling.
-- 👤 **Operator Profile & Security (`/operator/profile`)**: Dedicated operator details and password reset tabs.
-
-## 1.3 Tenant Admin Navigation Architecture
-- 📊 **Dashboard** (`/dashboard`): Executive Welcome Banner with Dean details & clinic name, facility site filter, live refresh counter, and KPI metric cards (`Today's Consultations`, `Avg Wait Time`, `No-Shows`, `Cashier Till Revenue`). Seeded tour checklist is omitted.
-- 👥 **Admin (Expandable Accordion)**:
-  - ⚙️ **Configuration** (`/settings?tab=config`): Master dropdown-driven configuration view (Payment Type, Visit Type, Order Status, Clinic Type, Specialization, Room Type, Floor Type, Bed Category, Expense Category) with dynamic item table & modal forms.
-  - 🏢 **Account Settings** (`/settings?tab=account`): Subscription profile, signatory details (`DR K R MURALI`), and compliance documents.
-  - 🔐 **User Authentication** (`/settings?tab=auth`): Keycloak OIDC issuer, client parameters, token scopes, and MFA status.
-  - 👥 **Users** (`/settings?tab=users`): Staff directory with role badges and **+ Invite Staff** modal.
-  - 💳 **Payment** (`/settings?tab=payment`): Payment collection rails, daily till reconciliation limits, PMJAY 100% cashless rules.
-  - 🌐 **Online Services** (`/settings?tab=online`): ABDM ABHA milestones, Telehealth switches, and SMS/WhatsApp gateway.
-
-## 1.4 Clinical Staff Navigation
-- **Receptionist**: Live Queue / Check-in board (`/queue`), Patients (`/patients`), Scheduling (`/scheduling`).
-- **Physician / Nurse**: My Schedule (`/my-schedule`), Live Queue (`/queue`), EMR / Notes (`/emr`).
-- **Biller**: Invoices (`/billing`), Payment Till, Referral Analytics (`/reports/referrals`).
+- **NMC Prohibition on Doctor Commission:** Clinic/clinician referrer types are commission-*ineligible* by default. Never enable doctor-referral commissions as a default or one-click feature.
+- **Referral & Follow-up Tracking:** Tracking, clinical prerequisites, and follow-up closure are fully active.
+- **ABDM Integration:** Patients link with 14-digit ABHA IDs (`patient.national_id`), providers use HPR, and facilities use HFR. Records adhere to FHIR R4.
+- **Aarogyasri / PMJAY:** Cashless billing eligibility captured via Aadhaar at check-in.

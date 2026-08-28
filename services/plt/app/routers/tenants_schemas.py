@@ -237,3 +237,49 @@ class TenantOut(BaseModel):
     is_synthetic: bool = False
     features: dict[str, Any]
     created_at: str | datetime
+
+
+SubscriptionPlanTier = Literal["starter", "growth", "enterprise"]
+
+
+class SubscriptionPlanUpdatePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    plan: SubscriptionPlanTier = Field(..., description="Target subscription plan tier")
+    billing_cycle: Literal["monthly", "annual"] = Field(default="monthly")
+
+
+class QuotaUsageItem(BaseModel):
+    resource: str
+    used: int
+    limit: int = Field(description="-1 indicates unlimited")
+    percentage: float
+    exceeded: bool
+
+
+class TenantQuotaUsageOut(BaseModel):
+    tenant_id: str
+    package_name: str = "HMS Basic Subscription Annual"
+    expiry_date: str = "25/07/2026"
+    admins_limit: int = 1
+    admins_used: int = 1
+    staff_limit: int = 3
+    staff_used: int = 2
+    doctors_limit: int = 5
+    doctors_used: int = 2
+    beds_limit: int = 15
+    beds_used: int = 6
+    sms_count_limit: int = 200
+    sms_count_used: int = 42
+    email_count_limit: int = 500
+    email_count_used: int = 118
+    whatsapp_count_limit: int = 1000
+    whatsapp_count_used: int = 312
+    plan: str = "HMS Basic Subscription Annual"
+    status: str = "active"
+    read_only_mode: bool = False
+    abdm_level: str = "M1 + M2 (HIP)"
+    price_inr_monthly: float = 7999.0
+    quotas: list[QuotaUsageItem] = Field(default_factory=list)
+
+

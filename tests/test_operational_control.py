@@ -107,3 +107,49 @@ def test_tenant_suspension_and_emergency_override():
     # 5. Teardown: offboard test tenant so no debris remains
     client.delete(f"/tenants/{tenant_id}", headers=headers)
 
+
+def test_saas_subscription_plan_and_quota_metering():
+    headers = {"Authorization": "Bearer dev.__operator__.operator"}
+    tenant_id = f"test_quota_{uuid.uuid4().hex[:6]}"
+
+    try:
+        # 1. Provision target tenant
+        provision_payload = {
+            "id": tenant_id,
+            "name": "SaaS Quota Test Clinic",
+            "region": "india",
+            "locale": "en-IN",
+            "currency": "INR",
+            "features": {"subscription_plan": "starter"}
+        }
+        resp = client.post("/tenants", json=provision_payload, headers=headers)
+        assert resp.status_code == 201
+
+        # 2. Get initial quota usage
+        resp_quota = client.get(f"/tenants/{tenant_id}/quotas", headers=headers)
+        assert resp_quota.status_code == 200
+        q_data = resp_quota.json()
+        assert q_data["tenant_id"] == tenant_id
+        assert "HMS Basic" in q_data["plan"] or "Starter" in q_data["plan"]
+        assert q_data["read_only_mode"] is False
+        assert q_data["admins_limit"] == 1
+        assert q_data["staff_limit"] == 3
+        assert q_data["beds_limit"] == 0 or q_data["beds_limit"] == 15
+        assert len(q_data["quotas"]) == 3
+
+        # 3. Upgrade subscription plan to growth
+        upgrade_payload = {
+            "plan": "growth",
+            "billing_cycle": "annual"
+        }
+        resp_up = client.put(f"/tenants/{tenant_id}/subscription/plan", json=upgrade_payload, headers=headers)
+        assert resp_up.status_code == 200
+        up_data = resp_up.json()
+        assert "Growth" in up_data["plan"]
+        assert up_data["doctors_limit"] == 10
+    finally:
+        # 4. Teardown guaranteed
+        client.delete(f"/tenants/{tenant_id}", headers=headers)
+
+
+

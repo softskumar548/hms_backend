@@ -34,9 +34,13 @@ def _load_env_file() -> None:
                 logger.debug("Could not load .env file: %s", e)
             break
 
+_load_env_file()
+
 DATABASE_URL = os.environ.get(
     "DATABASE_URL",
-    "postgresql+asyncpg://hms_app:app_password_change_me@postgres:5432/hms",
+    "postgresql+asyncpg://hms_app:app_password_change_me@localhost:5432/hms"
+    if os.getenv("ENV") == "test"
+    else "postgresql+asyncpg://hms_app:app_password_change_me@postgres:5432/hms",
 )
 
 from sqlalchemy.pool import NullPool

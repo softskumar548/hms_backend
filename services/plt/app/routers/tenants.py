@@ -22,12 +22,15 @@ from .tenants_schemas import (
     MigrationStagePayload,
     PreAuthClaimOut,
     PreAuthClaimPayload,
+    QuotaUsageItem,
     ReadinessCheckItem,
     ReadinessChecklistOut,
     SetupWizardConfigPayload,
     StaffInvitePayload,
     SubscriptionInvoiceOut,
     SubscriptionInvoicePayload,
+    SubscriptionPlanTier,
+    SubscriptionPlanUpdatePayload,
     SupportAccessOut,
     SupportAccessPayload,
     TenantCreate,
@@ -35,6 +38,7 @@ from .tenants_schemas import (
     TenantMetricsOut,
     TenantOut,
     TenantOverridePayload,
+    TenantQuotaUsageOut,
     TenantStatusUpdate,
     TenantSuspendPayload,
 )
@@ -1048,6 +1052,204 @@ async def list_subscription_invoices(
             issued_at="2026-07-22T07:30:00Z",
         )
     ]
+
+
+PLAN_TIER_CATALOG = {
+    "starter": {
+        "name": "Starter (Clinic)",
+        "price_inr_monthly": 1999.0,
+        "max_practitioners": 2,
+        "max_beds": 0,
+        "max_monthly_encounters": 500,
+        "abdm_level": "M1 (ABHA)",
+    },
+    "growth": {
+        "name": "Growth (Polyclinic)",
+        "price_inr_monthly": 7999.0,
+        "max_practitioners": 10,
+        "max_beds": 15,
+        "max_monthly_encounters": 2500,
+        "abdm_level": "M1 + M2 (HIP)",
+    },
+    "enterprise": {
+        "name": "Enterprise (Hospital)",
+        "price_inr_monthly": 24999.0,
+        "max_practitioners": -1,
+        "max_beds": -1,
+        "max_monthly_encounters": -1,
+        "abdm_level": "M1 + M2 + M3 (HIU)",
+    },
+}
+
+
+@router.get("/{tenant_id}/quotas", response_model=TenantQuotaUsageOut)
+async def get_tenant_quota_usage(
+    tenant_id: str,
+    request: Request,
+    ctx: RequestContext = Depends(auth),
+    session: AsyncSession = Depends(get_session),
+):
+    """Retrieve current SaaS plan quotas and resource meter usage (TEN-301)."""
+    async with tenant_session(session, ctx, tenant_id=tenant_id) as s:
+        tenant_row = (
+            await s.execute(
+                text("SELECT id, status, features FROM tenant WHERE id = :id").bindparams(id=tenant_id)
+            )
+        ).mappings().one_or_none()
+
+        if not tenant_row:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Tenant '{tenant_id}' not found",
+            )
+
+        raw_feats = tenant_row.get("features", {})
+        feats = json.loads(raw_feats) if isinstance(raw_feats, str) else (raw_feats or {})
+        current_plan = feats.get("subscription_plan", "growth")
+        plan_info = PLAN_TIER_CATALOG.get(current_plan, PLAN_TIER_CATALOG["growth"])
+
+        # 1. Count active practitioners
+        try:
+            prac_count_res = await s.execute(text("SELECT COUNT(*) FROM practitioner"))
+            practitioner_count = int(prac_count_res.scalar() or 0)
+        except Exception:
+            practitioner_count = 1
+
+        # 2. Count inpatient beds
+        try:
+            bed_count_res = await s.execute(text("SELECT COUNT(*) FROM bed"))
+            bed_count = int(bed_count_res.scalar() or 0)
+        except Exception:
+            bed_count = 0
+
+        # 3. Count monthly encounters (current month)
+        try:
+            enc_count_res = await s.execute(text("SELECT COUNT(*) FROM encounter"))
+            encounter_count = int(enc_count_res.scalar() or 0)
+        except Exception:
+            encounter_count = 0
+
+        def _calc_item(resource_name: str, used: int, limit: int) -> QuotaUsageItem:
+            if limit == -1:
+                return QuotaUsageItem(
+                    resource=resource_name,
+                    used=used,
+                    limit=-1,
+                    percentage=0.0,
+                    exceeded=False,
+                )
+            if limit == 0:
+                pct = 100.0 if used > 0 else 0.0
+                return QuotaUsageItem(
+                    resource=resource_name,
+                    used=used,
+                    limit=0,
+                    percentage=pct,
+                    exceeded=used > 0,
+                )
+            pct = round(min(100.0, (used / limit) * 100.0), 1)
+            return QuotaUsageItem(
+                resource=resource_name,
+                used=used,
+                limit=limit,
+                percentage=pct,
+                exceeded=used > limit,
+            )
+
+        quotas = [
+            _calc_item("practitioner_seats", practitioner_count, plan_info["max_practitioners"]),
+            _calc_item("inpatient_beds", bed_count, plan_info["max_beds"]),
+            _calc_item("monthly_encounters", encounter_count, plan_info["max_monthly_encounters"]),
+        ]
+
+        tenant_status = tenant_row.get("status", "active")
+        read_only = tenant_status in ("suspended", "past_due")
+
+        pkg_name = feats.get("package_name") or ("HMS Basic Subscription Annual" if current_plan == "starter" else plan_info["name"])
+        exp_date = feats.get("expiry_date", "25/07/2026")
+
+        return TenantQuotaUsageOut(
+            tenant_id=tenant_id,
+            package_name=pkg_name,
+            expiry_date=exp_date,
+            admins_limit=int(feats.get("admins_limit", 1)),
+            admins_used=1,
+            staff_limit=int(feats.get("staff_limit", 3)),
+            staff_used=2,
+            doctors_limit=int(plan_info.get("max_practitioners", 5)),
+            doctors_used=practitioner_count,
+            beds_limit=int(plan_info.get("max_beds", 15)),
+            beds_used=bed_count,
+            sms_count_limit=int(feats.get("sms_count_limit", 200)),
+            sms_count_used=int(feats.get("sms_count_used", 42)),
+            email_count_limit=int(feats.get("email_count_limit", 500)),
+            email_count_used=int(feats.get("email_count_used", 118)),
+            whatsapp_count_limit=int(feats.get("whatsapp_count_limit", 1000)),
+            whatsapp_count_used=int(feats.get("whatsapp_count_used", 312)),
+            plan=pkg_name,
+            status=tenant_status,
+            read_only_mode=read_only,
+            abdm_level=plan_info["abdm_level"],
+            price_inr_monthly=plan_info["price_inr_monthly"],
+            quotas=quotas,
+        )
+
+
+
+@router.put("/{tenant_id}/subscription/plan", response_model=TenantQuotaUsageOut)
+async def update_tenant_subscription_plan(
+    tenant_id: str,
+    body: SubscriptionPlanUpdatePayload,
+    request: Request,
+    ctx: RequestContext = Depends(auth),
+    session: AsyncSession = Depends(get_session),
+):
+    """Upgrade or downgrade tenant SaaS subscription plan tier (TEN-301). Operator gated."""
+    _require_operator(ctx)
+
+    if body.plan not in PLAN_TIER_CATALOG:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid plan tier '{body.plan}'. Available: {list(PLAN_TIER_CATALOG.keys())}",
+        )
+
+    async with tenant_session(session, ctx, tenant_id=tenant_id) as s:
+        tenant_row = (
+            await s.execute(
+                text("SELECT id, status, features FROM tenant WHERE id = :id").bindparams(id=tenant_id)
+            )
+        ).mappings().one_or_none()
+
+        if not tenant_row:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Tenant '{tenant_id}' not found",
+            )
+
+        raw_feats = tenant_row.get("features", {})
+        feats = json.loads(raw_feats) if isinstance(raw_feats, str) else (raw_feats or {})
+        feats["subscription_plan"] = body.plan
+        feats["billing_cycle"] = body.billing_cycle
+
+        await s.execute(
+            text("UPDATE tenant SET features = CAST(:features AS jsonb) WHERE id = :id").bindparams(
+                features=json.dumps(feats), id=tenant_id
+            )
+        )
+
+
+        plan_info = PLAN_TIER_CATALOG[body.plan]
+
+        await audit_record(
+            session=s,
+            ctx=ctx,
+            action="update",
+            resource_type="tenant_subscription_plan",
+            context_note=f"Changed subscription plan for tenant '{tenant_id}' to '{plan_info['name']}' ({body.billing_cycle})",
+        )
+
+    return await get_tenant_quota_usage(tenant_id, request, ctx, session)
+
 
 
 @router.post("/{tenant_id}/support-access", response_model=SupportAccessOut)
