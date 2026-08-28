@@ -43,8 +43,10 @@ Every requirement has an ID (`PLT-002`, `REG-001`, `IAM-006`, `TEN-101`, `REF-06
   - Operator emergency overrides & break-glass audit logs (`TEN-304`).
 - **SaaS Subscription Packages & Quota Metering (TEN-301 / Commercial Engine): BUILT & LIVE**
   - Multi-tier plan definitions (`starter`, `growth`, `enterprise`) and 9-dimensional quota tracking (`package_name`, `expiry_date`, `admins_limit`, `staff_limit`, `doctors_limit`, `beds_limit`, `sms_count_limit`, `email_count_limit`, `whatsapp_count_limit`).
+  - **Master Configuration Catalogs & Tier Quota Controls**: 20 standard healthcare catalogs included by default across all tiers; Custom Catalogs gated (Starter: 0/Locked, Growth: 5, Enterprise: Unlimited); category item limits enforced per tier (Rooms, Lab Tests, Specialties, Surgical Packages, Beds, Ambulances) with real-time UI quota meters.
   - Real-time quota usage and read-only mode calculation (`GET /tenants/{tenant_id}/quotas`) and operator tier upgrades (`PUT /tenants/{tenant_id}/subscription/plan`).
   - Soft-suspension safeguards ensuring clinical read safety while locking write operations on payment default.
+
 - **Readiness Engine & Safe Offboarding (T1-03, T3-01): BUILT & LIVE**
   - Full 6-check setup readiness evaluation engine with badge status rendering.
   - Dynamic topological cascade engine for safe tenant offboarding with database safeguards.
