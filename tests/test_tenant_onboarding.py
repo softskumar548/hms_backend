@@ -159,3 +159,57 @@ def test_readiness_checklist_individual_check_gating_behavior():
     client.delete(f"/tenants/{fresh_tid}", headers=headers)
     client.delete(f"/tenants/{comm_tid}", headers=headers)
 
+
+def test_tenant_admin_can_invite_doctor_with_password():
+    """Verify that a Tenant Admin can onboard a doctor with custom initial password (TEN-105)."""
+    op_headers = {"Authorization": "Bearer dev.__operator__.operator"}
+    tid = f"test_hosp_{uuid.uuid4().hex[:6]}"
+
+    # 1. Provision tenant
+    client.post("/tenants", json={
+        "id": tid,
+        "name": "Doctor Login Test Hospital",
+        "region": "india",
+        "locale": "en-IN",
+        "currency": "INR",
+    }, headers=op_headers)
+
+    # 2. Tenant admin headers
+    admin_headers = {"Authorization": f"Bearer dev.{tid}.admin"}
+
+    # 3. Tenant Admin invites a doctor with a temporary password
+    doc_email = f"dr.ramesh.{tid}@zensynq.com"
+    invite_resp = client.post(
+        f"/tenants/{tid}/invitations",
+        json={
+            "email": doc_email,
+            "role": "doctor",
+            "given_name": "Ramesh",
+            "family_name": "Naidu",
+            "department": "Cardiology",
+            "temporary_password": "ZenMed@Doctor2026",
+        },
+        headers=admin_headers,
+    )
+    assert invite_resp.status_code == 201
+    res_json = invite_resp.json()
+    assert res_json["status"] == "invited"
+    assert res_json["email"] == doc_email
+    assert res_json["tenant_id"] == tid
+
+    # 4. Attempting to invite for a different tenant should fail with 403 Forbidden
+    other_tid = f"other_{uuid.uuid4().hex[:6]}"
+    forbidden_resp = client.post(
+        f"/tenants/{other_tid}/invitations",
+        json={
+            "email": "intruder@other.com",
+            "role": "doctor",
+        },
+        headers=admin_headers,
+    )
+    assert forbidden_resp.status_code == 403
+
+    # Teardown
+    client.delete(f"/tenants/{tid}", headers=op_headers)
+
+

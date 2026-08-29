@@ -580,12 +580,16 @@ async def invite_staff(
     ctx: RequestContext = Depends(auth),
     session: AsyncSession = Depends(get_session),
 ):
-    """Invite staff member to onboarding tenant (TEN-105).
+    """Invite staff member to onboarding tenant and provision Keycloak credentials (TEN-105).
 
-    Operator gated. Creates both a practitioner profile in Postgres DB for the target
-    tenant and provisions a real Keycloak user identity via the Keycloak Admin REST API.
+    Accessible by Platform Operator OR Tenant Admin of the target tenant. Creates both
+    a practitioner profile in Postgres DB and provisions a real Keycloak user identity.
     """
-    _require_operator(ctx)
+    if ctx.role != "operator" and not (ctx.role in ("admin", "tenant_admin") and ctx.tenant_id == tenant_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Platform operator or tenant administrator credentials required",
+        )
 
     import os
     import httpx
@@ -596,6 +600,8 @@ async def invite_staff(
     family = body.family_name or "Member"
     full_name = f"Dr. {given} {family}" if body.role in ("physician", "doctor") else f"{given} {family}"
     spec = "General Practice" if body.role in ("physician", "doctor") else "Clinical Staff"
+    user_email = body.email.strip().lower()
+    pwd_value = (body.temporary_password or "").strip() or "Password123!"
 
     async with tenant_session(session, ctx, tenant_id=tenant_id) as s:
         # 1. Insert practitioner record into Postgres target tenant database
@@ -611,7 +617,7 @@ async def invite_staff(
             ctx=ctx,
             action="create",
             resource_type="staff_invitation",
-            context_note=f"Invited staff member '{body.email}' as '{body.role}' (practitioner_id: {prac_id}) to tenant '{tenant_id}'",
+            context_note=f"Invited staff member '{user_email}' as '{body.role}' (practitioner_id: {prac_id}) to tenant '{tenant_id}'",
         )
 
     # 2. Provision real Keycloak User Identity via Admin REST API
@@ -639,20 +645,19 @@ async def invite_staff(
 
                 # Step B: Check existing user or create user
                 user_payload = {
-                    "username": body.email,
-                    "email": body.email,
+                    "username": user_email,
+                    "email": user_email,
                     "firstName": given,
                     "lastName": family,
                     "enabled": True,
                     "emailVerified": True,
-                    "requiredActions": ["UPDATE_PASSWORD"],
                     "attributes": {
                         "tenant_id": [tenant_id]
                     },
                     "credentials": [
                         {
                             "type": "password",
-                            "value": "Password123!",
+                            "value": pwd_value,
                             "temporary": False
                         }
                     ]
@@ -667,30 +672,57 @@ async def invite_staff(
                 if create_resp.status_code in (201, 409):
                     keycloak_created = True
 
-                    # Find user ID to map realm role
+                    # Find user ID to configure attributes, password and map realm roles
                     get_user_resp = await client.get(
-                        f"{keycloak_url}/admin/realms/hms/users?username={body.email}",
+                        f"{keycloak_url}/admin/realms/hms/users?username={user_email}",
                         headers=headers,
                         timeout=5.0,
                     )
                     if get_user_resp.status_code == 200 and get_user_resp.json():
-                        uid = get_user_resp.json()[0]["id"]
-                        
-                        # Map requested role (e.g. physician -> doctor)
-                        kc_role = "doctor" if body.role in ("physician", "doctor") else body.role
-                        get_role_resp = await client.get(
-                            f"{keycloak_url}/admin/realms/hms/roles/{kc_role}",
+                        u_obj = get_user_resp.json()[0]
+                        uid = u_obj["id"]
+
+                        # Update attributes to bind tenant_id
+                        u_obj["enabled"] = True
+                        u_obj["emailVerified"] = True
+                        u_attrs = u_obj.get("attributes") or {}
+                        u_attrs["tenant_id"] = [tenant_id]
+                        u_obj["attributes"] = u_attrs
+                        await client.put(
+                            f"{keycloak_url}/admin/realms/hms/users/{uid}",
                             headers=headers,
+                            json=u_obj,
                             timeout=5.0,
                         )
-                        if get_role_resp.status_code == 200:
-                            role_rep = get_role_resp.json()
-                            await client.post(
-                                f"{keycloak_url}/admin/realms/hms/users/{uid}/role-mappings/realm",
+
+                        # Set password explicitly
+                        await client.put(
+                            f"{keycloak_url}/admin/realms/hms/users/{uid}/reset-password",
+                            headers=headers,
+                            json={
+                                "type": "password",
+                                "value": pwd_value,
+                                "temporary": False,
+                            },
+                            timeout=5.0,
+                        )
+                        
+                        # Map requested roles
+                        kc_roles = ["physician", "doctor"] if body.role in ("physician", "doctor") else [body.role]
+                        for r_name in kc_roles:
+                            get_role_resp = await client.get(
+                                f"{keycloak_url}/admin/realms/hms/roles/{r_name}",
                                 headers=headers,
-                                json=[role_rep],
                                 timeout=5.0,
                             )
+                            if get_role_resp.status_code == 200:
+                                role_rep = get_role_resp.json()
+                                await client.post(
+                                    f"{keycloak_url}/admin/realms/hms/users/{uid}/role-mappings/realm",
+                                    headers=headers,
+                                    json=[role_rep],
+                                    timeout=5.0,
+                                )
     except (httpx.HTTPError, KeyError, ValueError, RuntimeError) as err:
         # Non-fatal logging if Keycloak container unreachable during standalone test runs
         print(f"Keycloak admin provisioning notice: {err}")
@@ -698,7 +730,7 @@ async def invite_staff(
     return {
         "status": "invited",
         "tenant_id": tenant_id,
-        "email": body.email,
+        "email": user_email,
         "role": body.role,
         "practitioner_id": prac_id,
         "keycloak_user_created": keycloak_created,

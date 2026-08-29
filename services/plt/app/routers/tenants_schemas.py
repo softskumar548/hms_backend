@@ -93,6 +93,7 @@ class StaffInvitePayload(BaseModel):
     given_name: str | None = Field(default="Staff")
     family_name: str | None = Field(default="Member")
     department: str | None = Field(default=None)
+    temporary_password: str | None = Field(default=None)
 
 
 class MigrationStageItem(BaseModel):
