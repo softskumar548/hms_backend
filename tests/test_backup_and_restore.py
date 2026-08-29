@@ -10,6 +10,7 @@ Verifies the complete off-box automated backup & restore pipeline:
 import os
 import subprocess
 import datetime
+import shutil
 import pytest
 import asyncio
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -22,8 +23,10 @@ DB_NAME = os.environ.get("POSTGRES_DB", "hms")
 PASSPHRASE = os.environ.get("BACKUP_PASSPHRASE", "hms_india_vps_backup_secret_2026")
 PGPASSWORD = os.environ.get("POSTGRES_PASSWORD", "postgres_change_me")
 
-BACKUP_DIR = "/tmp/backups"
+BACKUP_DIR = "/tmp/backups" if os.name != "nt" else os.path.join(os.environ.get("TEMP", "C:\\temp"), "hms_backups")
 RESTORE_DB = "hms_restore_test"
+
+TOOLS_AVAILABLE = bool(shutil.which("pg_dump") and shutil.which("psql") and shutil.which("openssl"))
 
 
 async def get_table_counts(db_url: str) -> dict[str, int]:
@@ -73,6 +76,7 @@ def run_decrypted_restore(enc_file: str):
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(not TOOLS_AVAILABLE, reason="pg_dump, psql, or openssl CLI not available on local PATH (e.g. running in host dev environment without PG binaries)")
 async def test_encrypted_backup_and_restore_integrity_verification():
     """Sprint N2 / Item D5 / Gate N2-04: Perform encrypted backup, restore into test DB, and verify row counts match 100%."""
     # 1. Perform encrypted backup
