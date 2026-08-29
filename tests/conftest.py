@@ -27,8 +27,20 @@ async def verify_no_leftover_test_tenants():
     # Pre-test cleanup of any leftover test tenants from previous interrupted test runs
     try:
         async with session_factory() as s:
-            await s.execute(text("DELETE FROM tenant WHERE id LIKE 'test_%' OR id LIKE 't_%' OR name LIKE 'Test%' OR name LIKE 'Temp%' OR name LIKE 'Suspension%'"))
-            await s.commit()
+            t_ids = (await s.execute(text("SELECT id FROM tenant WHERE id LIKE 'test_%' OR id LIKE 't_%' OR id LIKE 'e2e%' OR name LIKE 'Test%' OR name LIKE 'Temp%' OR name LIKE 'Suspension%' OR name LIKE '%E2E%'"))).scalars().all()
+            if t_ids:
+                for tid in t_ids:
+                    try:
+                        await s.execute(text(f"SET app.tenant_id = '{tid}'"))
+                        await s.execute(text(f"DELETE FROM practitioner WHERE tenant_id = '{tid}'"))
+                        await s.execute(text(f"DELETE FROM encounter WHERE tenant_id = '{tid}'"))
+                        await s.execute(text(f"DELETE FROM patient WHERE tenant_id = '{tid}'"))
+                        await s.execute(text(f"DELETE FROM tenant_config WHERE tenant_id = '{tid}'"))
+                        await s.execute(text("RESET app.tenant_id"))
+                        await s.execute(text(f"DELETE FROM tenant WHERE id = '{tid}'"))
+                    except Exception:
+                        pass
+                await s.commit()
     except Exception:
         pass
 
