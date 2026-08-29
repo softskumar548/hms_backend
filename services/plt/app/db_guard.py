@@ -90,6 +90,34 @@ class DatabaseSafetyError(RuntimeError):
     """Raised when the runtime database does not meet safety requirements."""
 
 
+async def auto_sync_schema() -> None:
+    """Idempotently ensure critical table columns and indexes exist."""
+    from sqlalchemy.ext.asyncio import create_async_engine
+    seed_url = os.environ.get("SEED_DATABASE_URL")
+    if not seed_url:
+        return
+    try:
+        admin_engine = create_async_engine(seed_url, echo=False)
+        async with admin_engine.begin() as conn:
+            await conn.execute(text("""
+                ALTER TABLE patient ADD COLUMN IF NOT EXISTS is_newborn BOOLEAN NOT NULL DEFAULT FALSE;
+                ALTER TABLE patient ADD COLUMN IF NOT EXISTS mother_patient_id UUID REFERENCES patient(id) ON DELETE SET NULL;
+                ALTER TABLE patient ADD COLUMN IF NOT EXISTS birth_time TEXT;
+                ALTER TABLE patient ADD COLUMN IF NOT EXISTS birth_weight_grams INTEGER;
+                ALTER TABLE patient ADD COLUMN IF NOT EXISTS gestational_age_weeks INTEGER;
+                ALTER TABLE patient ADD COLUMN IF NOT EXISTS multiple_birth_order INTEGER NOT NULL DEFAULT 1;
+                ALTER TABLE patient ADD COLUMN IF NOT EXISTS delivery_type TEXT;
+                ALTER TABLE patient ADD COLUMN IF NOT EXISTS apgar_score_1min INTEGER;
+                ALTER TABLE patient ADD COLUMN IF NOT EXISTS apgar_score_5min INTEGER;
+                CREATE INDEX IF NOT EXISTS ix_patient_mother ON patient (tenant_id, mother_patient_id);
+                CREATE INDEX IF NOT EXISTS ix_patient_is_newborn ON patient (tenant_id, is_newborn);
+            """))
+        await admin_engine.dispose()
+        log.info("db_guard: auto_sync_schema applied successfully")
+    except Exception as e:
+        log.warning(f"db_guard: auto_sync_schema skipped or encountered: {e}")
+
+
 async def verify_database_safety() -> None:
     """Connect to the real DB and verify the safety invariants. Raise on any
     failure so the process exits (or health stays red) instead of serving."""
@@ -104,6 +132,9 @@ async def verify_database_safety() -> None:
             )
         log.warning("MOCK DB ALLOWED (ENV=test). Never valid outside unit tests.")
         return
+
+    # Attempt automatic schema synchronization if admin DB URL is available
+    await auto_sync_schema()
 
     try:
         async with engine.connect() as conn:

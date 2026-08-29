@@ -108,6 +108,8 @@ jobs:
             fi
             docker compose up -d --build --remove-orphans
             sleep 5
+            docker compose exec -T postgres psql -U postgres -d hms -f /docker-entrypoint-initdb.d/01-init.sql || true
+            sleep 2
             docker compose up -d --force-recreate nginx
             docker compose ps
 
