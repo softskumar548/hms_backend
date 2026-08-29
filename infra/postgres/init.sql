@@ -31,33 +31,55 @@ $$ LANGUAGE sql STABLE;
 
 -- 1. Patient Table
 CREATE TABLE IF NOT EXISTS patient (
-    id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id          TEXT NOT NULL REFERENCES tenant(id),
-    given_name         TEXT NOT NULL,
-    family_name        TEXT NOT NULL,
-    dob                DATE,
-    national_id        TEXT,
-    phone              TEXT,
-    gender             TEXT,
-    email              TEXT,
-    preferred_language TEXT DEFAULT 'te',
-    abha_number        TEXT,
-    abha_address       TEXT,
-    aarogyasri_id      TEXT,
-    pmjay_id           TEXT,
-    aadhaar_last_four  TEXT,
-    referred_by_type   TEXT,
-    referred_by_name   TEXT,
-    referred_by_id     TEXT,
-    address            JSONB,
-    next_of_kin        JSONB,
-    fhir_resource      JSONB,
-    created_by         TEXT,
-    created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+    id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id             TEXT NOT NULL REFERENCES tenant(id),
+    given_name            TEXT NOT NULL,
+    family_name           TEXT NOT NULL,
+    dob                   DATE,
+    national_id           TEXT,
+    phone                 TEXT,
+    gender                TEXT,
+    email                 TEXT,
+    preferred_language    TEXT DEFAULT 'te',
+    abha_number           TEXT,
+    abha_address          TEXT,
+    aarogyasri_id         TEXT,
+    pmjay_id              TEXT,
+    aadhaar_last_four     TEXT,
+    referred_by_type      TEXT,
+    referred_by_name      TEXT,
+    referred_by_id        TEXT,
+    address               JSONB,
+    next_of_kin           JSONB,
+    is_newborn            BOOLEAN NOT NULL DEFAULT FALSE,
+    mother_patient_id     UUID REFERENCES patient(id) ON DELETE SET NULL,
+    birth_time            TEXT,
+    birth_weight_grams    INTEGER,
+    gestational_age_weeks INTEGER,
+    multiple_birth_order  INTEGER NOT NULL DEFAULT 1,
+    delivery_type         TEXT,
+    apgar_score_1min      INTEGER,
+    apgar_score_5min      INTEGER,
+    fhir_resource         JSONB,
+    created_by            TEXT,
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at            TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+ALTER TABLE patient ADD COLUMN IF NOT EXISTS is_newborn BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE patient ADD COLUMN IF NOT EXISTS mother_patient_id UUID REFERENCES patient(id) ON DELETE SET NULL;
+ALTER TABLE patient ADD COLUMN IF NOT EXISTS birth_time TEXT;
+ALTER TABLE patient ADD COLUMN IF NOT EXISTS birth_weight_grams INTEGER;
+ALTER TABLE patient ADD COLUMN IF NOT EXISTS gestational_age_weeks INTEGER;
+ALTER TABLE patient ADD COLUMN IF NOT EXISTS multiple_birth_order INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE patient ADD COLUMN IF NOT EXISTS delivery_type TEXT;
+ALTER TABLE patient ADD COLUMN IF NOT EXISTS apgar_score_1min INTEGER;
+ALTER TABLE patient ADD COLUMN IF NOT EXISTS apgar_score_5min INTEGER;
+
 CREATE INDEX IF NOT EXISTS ix_patient_tenant ON patient (tenant_id);
 CREATE INDEX IF NOT EXISTS ix_patient_name   ON patient (tenant_id, family_name, given_name);
+CREATE INDEX IF NOT EXISTS ix_patient_mother ON patient (tenant_id, mother_patient_id);
+CREATE INDEX IF NOT EXISTS ix_patient_is_newborn ON patient (tenant_id, is_newborn);
 
 -- 2. Audit Event Table (Append-Only PLT-005)
 CREATE TABLE IF NOT EXISTS audit_event (

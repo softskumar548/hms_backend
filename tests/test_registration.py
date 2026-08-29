@@ -231,6 +231,15 @@ def test_create_patient_success(mock_check_dupes, mock_audit, mock_event, db_ses
         "preferred_language": "te-IN",
         "address": None,
         "next_of_kin": None,
+        "is_newborn": False,
+        "mother_patient_id": None,
+        "birth_time": None,
+        "birth_weight_grams": None,
+        "gestational_age_weeks": None,
+        "multiple_birth_order": 1,
+        "delivery_type": None,
+        "apgar_score_1min": None,
+        "apgar_score_5min": None,
         "fhir_resource": {"resourceType": "Patient"}
     }
     mock_insert_res = MagicMock()
@@ -326,6 +335,15 @@ def test_create_patient_duplicate_override(mock_check_dupes, mock_audit, mock_ev
         "preferred_language": None,
         "address": None,
         "next_of_kin": None,
+        "is_newborn": False,
+        "mother_patient_id": None,
+        "birth_time": None,
+        "birth_weight_grams": None,
+        "gestational_age_weeks": None,
+        "multiple_birth_order": 1,
+        "delivery_type": None,
+        "apgar_score_1min": None,
+        "apgar_score_5min": None,
         "fhir_resource": {"resourceType": "Patient"}
     }
     
@@ -367,3 +385,65 @@ def test_least_privilege_roles():
     )
     assert response.status_code == 403
     assert "role 'physician' not permitted" in response.text
+
+
+@pytest.mark.asyncio
+async def test_newborn_duplicate_exemption():
+    """Verify newborn registrations (is_newborn=True) are exempt from duplicate detection (REG-010)."""
+    mock_session = AsyncMock(spec=AsyncSession)
+    from app.schemas import PatientCreate
+    
+    newborn_data = PatientCreate(
+        given_name="Baby of Lakshmi",
+        family_name="Devi",
+        dob=date(2026, 8, 29),
+        phone="9876543210",  # Same as mother's phone
+        is_newborn=True,
+        mother_patient_id="11111111-1111-1111-1111-111111111111"
+    )
+
+    # Should immediately return empty list without running queries
+    dupes = await check_duplicate_patient(mock_session, "tenantA", newborn_data)
+    assert dupes == []
+    mock_session.execute.assert_not_called()
+
+
+def test_newborn_fhir_mapping():
+    """Verify FHIR mapping properly incorporates birthTime, multipleBirth, and mother extensions for neonates."""
+    from app.schemas import PatientCreate
+    
+    newborn_data = PatientCreate(
+        given_name="Baby of Lakshmi",
+        family_name="Devi",
+        dob=date(2026, 8, 29),
+        gender="male",
+        phone="9876543210",
+        is_newborn=True,
+        mother_patient_id="11111111-1111-1111-1111-111111111111",
+        birth_time="14:35",
+        birth_weight_grams=2950,
+        gestational_age_weeks=38,
+        multiple_birth_order=1,
+        delivery_type="cesarean_lscs",
+        apgar_score_1min=8,
+        apgar_score_5min=9
+    )
+    
+    fhir_res = map_to_fhir_patient("newborn-uuid-1", newborn_data)
+    assert fhir_res["resourceType"] == "Patient"
+    assert fhir_res["id"] == "newborn-uuid-1"
+    assert fhir_res["multipleBirthInteger"] == 1
+    
+    # Check birthTime extension
+    extensions = fhir_res.get("extension", [])
+    birth_time_ext = next((e for e in extensions if "patient-birthTime" in e["url"]), None)
+    assert birth_time_ext is not None
+    assert "2026-08-29" in str(birth_time_ext["valueDateTime"])
+    assert "14:35" in str(birth_time_ext["valueDateTime"])
+    
+    # Check maternal name extension
+    mother_ext = next((e for e in extensions if "patient-mothersMaidenName" in e["url"]), None)
+    assert mother_ext is not None
+    assert mother_ext["valueString"] == "Devi"
+
+

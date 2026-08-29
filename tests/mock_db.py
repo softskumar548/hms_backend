@@ -63,6 +63,15 @@ class MockAsyncSession:
                 "referred_by_id": None,
                 "address": None,
                 "next_of_kin": None,
+                "is_newborn": False,
+                "mother_patient_id": None,
+                "birth_time": None,
+                "birth_weight_grams": None,
+                "gestational_age_weeks": None,
+                "multiple_birth_order": 1,
+                "delivery_type": None,
+                "apgar_score_1min": None,
+                "apgar_score_5min": None,
                 "fhir_resource": None
             },
             {
@@ -86,6 +95,15 @@ class MockAsyncSession:
                 "referred_by_id": None,
                 "address": None,
                 "next_of_kin": None,
+                "is_newborn": False,
+                "mother_patient_id": None,
+                "birth_time": None,
+                "birth_weight_grams": None,
+                "gestational_age_weeks": None,
+                "multiple_birth_order": 1,
+                "delivery_type": None,
+                "apgar_score_1min": None,
+                "apgar_score_5min": None,
                 "fhir_resource": None
             }
         ],

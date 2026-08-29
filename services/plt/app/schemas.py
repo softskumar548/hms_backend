@@ -32,6 +32,17 @@ class PatientCreate(BaseModel):
     address: Optional[dict] = None
     next_of_kin: Optional[dict] = None
 
+    # Newborn (Neonate) Specifics
+    is_newborn: Optional[bool] = False
+    mother_patient_id: Optional[str] = None
+    birth_time: Optional[str] = None  # e.g., "14:35" or "14:35:00"
+    birth_weight_grams: Optional[int] = None  # e.g. 2950
+    gestational_age_weeks: Optional[int] = None  # e.g. 38
+    multiple_birth_order: Optional[int] = 1  # 1 for Single / Twin 1, 2 for Twin 2
+    delivery_type: Optional[str] = None  # 'normal_vaginal', 'cesarean_lscs', 'assisted_vacuum'
+    apgar_score_1min: Optional[int] = None
+    apgar_score_5min: Optional[int] = None
+
     @field_validator("abha_number")
     @classmethod
     def validate_abha_number(cls, v: Optional[str]) -> Optional[str]:
@@ -102,7 +113,19 @@ class PatientOut(BaseModel):
     preferred_language: Optional[str] = None
     address: Optional[dict] = None
     next_of_kin: Optional[dict] = None
+
+    # Newborn (Neonate) Specifics
+    is_newborn: Optional[bool] = False
+    mother_patient_id: Optional[str] = None
+    birth_time: Optional[str] = None
+    birth_weight_grams: Optional[int] = None
+    gestational_age_weeks: Optional[int] = None
+    multiple_birth_order: Optional[int] = 1
+    delivery_type: Optional[str] = None
+    apgar_score_1min: Optional[int] = None
+    apgar_score_5min: Optional[int] = None
     
     # Validated FHIR payload representation
     fhir_resource: Optional[dict] = None
+
 

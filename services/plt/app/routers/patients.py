@@ -40,7 +40,11 @@ async def check_duplicate_patient(
     
     Matches on exact identifiers (deterministic) or computes a match score 
     based on phone, DOB, names, and gender (probabilistic).
+    Exempts newborns (is_newborn=True) from false duplicate collisions with the mother.
     """
+    if body.is_newborn:
+        return []
+
     # 1. Deterministic match on exact identifiers (national ID, ABHA, Aarogyasri, PMJAY)
     det_clauses = []
     det_binds = {}
@@ -141,8 +145,25 @@ def map_to_fhir_patient(patient_id: str, body: PatientCreate) -> dict[str, Any]:
         "address": [],
         "contact": [],
         "identifier": [],
-        "communication": []
+        "communication": [],
+        "extension": []
     }
+
+    # Neonatal (Newborn) FHIR Extensions & Attributes
+    if body.is_newborn:
+        if body.multiple_birth_order:
+            fhir_dict["multipleBirthInteger"] = body.multiple_birth_order
+        if body.dob and body.birth_time:
+            time_part = body.birth_time if len(body.birth_time) == 8 else f"{body.birth_time}:00" if len(body.birth_time) == 5 else "00:00:00"
+            fhir_dict["extension"].append({
+                "url": "http://hl7.org/fhir/StructureDefinition/patient-birthTime",
+                "valueDateTime": f"{body.dob.isoformat()}T{time_part}+05:30"
+            })
+        if body.mother_patient_id:
+            fhir_dict["extension"].append({
+                "url": "http://hl7.org/fhir/StructureDefinition/patient-mothersMaidenName",
+                "valueString": body.family_name
+            })
 
     if body.phone:
         fhir_dict["telecom"].append({
@@ -232,6 +253,9 @@ def map_to_fhir_patient(patient_id: str, body: PatientCreate) -> dict[str, Any]:
             "value": body.abha_address
         })
 
+    if not fhir_dict.get("extension"):
+        fhir_dict.pop("extension", None)
+
     # Validate against FHIR R4 standard schema using fhir.resources Pydantic models
     validated_patient = FHIRPatient.model_validate(fhir_dict)
     return validated_patient.model_dump(exclude_none=True)
@@ -250,7 +274,9 @@ async def list_patients(
                     "SELECT id, given_name, family_name, dob, national_id, phone, "
                     "abha_number, abha_address, aarogyasri_id, pmjay_id, aadhaar_last_four, "
                     "referred_by_type, referred_by_name, referred_by_id, gender, email, "
-                    "preferred_language, address, next_of_kin, fhir_resource "
+                    "preferred_language, address, next_of_kin, is_newborn, mother_patient_id, "
+                    "birth_time, birth_weight_grams, gestational_age_weeks, multiple_birth_order, "
+                    "delivery_type, apgar_score_1min, apgar_score_5min, fhir_resource "
                     "FROM patient ORDER BY family_name, given_name"
                 )
             )
@@ -275,7 +301,7 @@ async def create_patient(
 ):
     ctx.require_role("admin", "receptionist")  # least-privilege (IAM-002)
     async with tenant_session(session, ctx) as s:
-        # 1. Run Duplicate detection check
+        # 1. Run Duplicate detection check (newborns exempt)
         if not force:
             duplicates = await check_duplicate_patient(s, ctx.tenant_id, body)
             if duplicates:
@@ -305,14 +331,20 @@ async def create_patient(
                     "(id, tenant_id, given_name, family_name, dob, national_id, phone, "
                     "abha_number, abha_address, aarogyasri_id, pmjay_id, aadhaar_last_four, "
                     "referred_by_type, referred_by_name, referred_by_id, gender, email, "
-                    "preferred_language, address, next_of_kin, fhir_resource, created_by) "
+                    "preferred_language, address, next_of_kin, is_newborn, mother_patient_id, "
+                    "birth_time, birth_weight_grams, gestational_age_weeks, multiple_birth_order, "
+                    "delivery_type, apgar_score_1min, apgar_score_5min, fhir_resource, created_by) "
                     "VALUES (CAST(:id AS uuid), :t, :g, :f, CAST(:d AS date), :n, :p, :abha_num, :abha_addr, :aarogyasri, "
                     ":pmjay, :aadhaar, :ref_type, :ref_name, :ref_id, :gender, :email, "
-                    ":language, CAST(:address AS jsonb), CAST(:next_of_kin AS jsonb), CAST(:fhir_resource AS jsonb), :cb) "
+                    ":language, CAST(:address AS jsonb), CAST(:next_of_kin AS jsonb), :is_nb, "
+                    "CAST(:mother_id AS uuid), :b_time, :b_weight, :gest_age, :mult_order, "
+                    ":del_type, :apgar1, :apgar5, CAST(:fhir_resource AS jsonb), :cb) "
                     "RETURNING id, given_name, family_name, dob, national_id, phone, "
                     "abha_number, abha_address, aarogyasri_id, pmjay_id, aadhaar_last_four, "
                     "referred_by_type, referred_by_name, referred_by_id, gender, email, "
-                    "preferred_language, address, next_of_kin, fhir_resource"
+                    "preferred_language, address, next_of_kin, is_newborn, mother_patient_id, "
+                    "birth_time, birth_weight_grams, gestational_age_weeks, multiple_birth_order, "
+                    "delivery_type, apgar_score_1min, apgar_score_5min, fhir_resource"
                 ).bindparams(
                     id=patient_id, t=ctx.tenant_id, g=body.given_name, f=body.family_name,
                     d=body.dob, n=body.national_id, p=body.phone, abha_num=body.abha_number,
@@ -322,6 +354,15 @@ async def create_patient(
                     email=body.email, language=body.preferred_language,
                     address=json.dumps(body.address.model_dump() if hasattr(body.address, "model_dump") else body.address) if body.address else "{}",
                     next_of_kin=json.dumps(body.next_of_kin.model_dump() if hasattr(body.next_of_kin, "model_dump") else body.next_of_kin) if body.next_of_kin else "{}",
+                    is_nb=bool(body.is_newborn),
+                    mother_id=body.mother_patient_id,
+                    b_time=body.birth_time,
+                    b_weight=body.birth_weight_grams,
+                    gest_age=body.gestational_age_weeks,
+                    mult_order=body.multiple_birth_order or 1,
+                    del_type=body.delivery_type,
+                    apgar1=body.apgar_score_1min,
+                    apgar5=body.apgar_score_5min,
                     fhir_resource=json.dumps(fhir_resource, default=str), cb=ctx.user_id,
                 )
             )
@@ -331,7 +372,7 @@ async def create_patient(
             s, ctx, action="create", resource_type="Patient",
             resource_id=str(row["id"]), patient_id=str(row["id"]),
             source_ip=request.client.host if request.client else None,
-            context_note="force create override" if force else None
+            context_note="force create override" if force else ("newborn registration" if body.is_newborn else None)
         )
         await s.commit()
 
@@ -340,6 +381,7 @@ async def create_patient(
         "id": str(row["id"]),
         "tenant_id": ctx.tenant_id,
         "action": "create",
+        "is_newborn": bool(row.get("is_newborn", False)),
         "timestamp": fhir_resource.get("meta", {}).get("lastUpdated")
     })
 
@@ -360,7 +402,9 @@ async def get_patient(
                     "SELECT id, given_name, family_name, dob, national_id, phone, "
                     "abha_number, abha_address, aarogyasri_id, pmjay_id, aadhaar_last_four, "
                     "referred_by_type, referred_by_name, referred_by_id, gender, email, "
-                    "preferred_language, address, next_of_kin, fhir_resource "
+                    "preferred_language, address, next_of_kin, is_newborn, mother_patient_id, "
+                    "birth_time, birth_weight_grams, gestational_age_weeks, multiple_birth_order, "
+                    "delivery_type, apgar_score_1min, apgar_score_5min, fhir_resource "
                     "FROM patient WHERE id = CAST(:pid AS uuid)"
                 ).bindparams(pid=patient_id)
             )
@@ -408,12 +452,18 @@ async def update_patient(
                     "pmjay_id = :pmjay, aadhaar_last_four = :aadhaar, referred_by_type = :ref_type, "
                     "referred_by_name = :ref_name, referred_by_id = :ref_id, gender = :gender, "
                     "email = :email, preferred_language = :language, address = :address, "
-                    "next_of_kin = :next_of_kin, fhir_resource = :fhir_resource, updated_at = now() "
+                    "next_of_kin = :next_of_kin, is_newborn = :is_nb, mother_patient_id = CAST(:mother_id AS uuid), "
+                    "birth_time = :b_time, birth_weight_grams = :b_weight, gestational_age_weeks = :gest_age, "
+                    "multiple_birth_order = :mult_order, delivery_type = :del_type, "
+                    "apgar_score_1min = :apgar1, apgar_score_5min = :apgar5, "
+                    "fhir_resource = :fhir_resource, updated_at = now() "
                     "WHERE id = CAST(:pid AS uuid) "
                     "RETURNING id, given_name, family_name, dob, national_id, phone, "
                     "abha_number, abha_address, aarogyasri_id, pmjay_id, aadhaar_last_four, "
                     "referred_by_type, referred_by_name, referred_by_id, gender, email, "
-                    "preferred_language, address, next_of_kin, fhir_resource"
+                    "preferred_language, address, next_of_kin, is_newborn, mother_patient_id, "
+                    "birth_time, birth_weight_grams, gestational_age_weeks, multiple_birth_order, "
+                    "delivery_type, apgar_score_1min, apgar_score_5min, fhir_resource"
                 ).bindparams(
                     pid=patient_id, g=body.given_name, f=body.family_name,
                     d=body.dob, n=body.national_id, p=body.phone, abha_num=body.abha_number,
@@ -422,6 +472,15 @@ async def update_patient(
                     ref_name=body.referred_by_name, ref_id=body.referred_by_id, gender=body.gender,
                     email=body.email, language=body.preferred_language,
                     address=body.address, next_of_kin=body.next_of_kin,
+                    is_nb=bool(body.is_newborn),
+                    mother_id=body.mother_patient_id,
+                    b_time=body.birth_time,
+                    b_weight=body.birth_weight_grams,
+                    gest_age=body.gestational_age_weeks,
+                    mult_order=body.multiple_birth_order or 1,
+                    del_type=body.delivery_type,
+                    apgar1=body.apgar_score_1min,
+                    apgar5=body.apgar_score_5min,
                     fhir_resource=fhir_resource,
                 )
             )
@@ -439,6 +498,7 @@ async def update_patient(
         "id": patient_id,
         "tenant_id": ctx.tenant_id,
         "action": "update",
+        "is_newborn": bool(row["is_newborn"]),
         "timestamp": fhir_resource.get("meta", {}).get("lastUpdated")
     })
 
