@@ -3,9 +3,10 @@ resource; the full FHIR mapping lives in the hms_fhir library (flag F2)."""
 
 from datetime import date
 import re
-from typing import Optional
+from typing import Optional, Union
+import uuid
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_serializer, field_validator, model_validator
 
 
 class PatientCreate(BaseModel):
@@ -34,7 +35,7 @@ class PatientCreate(BaseModel):
 
     # Newborn (Neonate) Specifics
     is_newborn: Optional[bool] = False
-    mother_patient_id: Optional[str] = None
+    mother_patient_id: Optional[Union[str, uuid.UUID]] = None
     birth_time: Optional[str] = None  # e.g., "14:35" or "14:35:00"
     birth_weight_grams: Optional[int] = None  # e.g. 2950
     gestational_age_weeks: Optional[int] = None  # e.g. 38
@@ -42,6 +43,10 @@ class PatientCreate(BaseModel):
     delivery_type: Optional[str] = None  # 'normal_vaginal', 'cesarean_lscs', 'assisted_vacuum'
     apgar_score_1min: Optional[int] = None
     apgar_score_5min: Optional[int] = None
+
+    @field_serializer("mother_patient_id", when_used="json")
+    def serialize_mother_patient_id(self, v: Optional[Union[str, uuid.UUID]]) -> Optional[str]:
+        return str(v) if v is not None else None
 
     @field_validator("abha_number")
     @classmethod
@@ -116,7 +121,7 @@ class PatientOut(BaseModel):
 
     # Newborn (Neonate) Specifics
     is_newborn: Optional[bool] = False
-    mother_patient_id: Optional[str] = None
+    mother_patient_id: Optional[Union[str, uuid.UUID]] = None
     birth_time: Optional[str] = None
     birth_weight_grams: Optional[int] = None
     gestational_age_weeks: Optional[int] = None
@@ -127,5 +132,9 @@ class PatientOut(BaseModel):
     
     # Validated FHIR payload representation
     fhir_resource: Optional[dict] = None
+
+    @field_serializer("mother_patient_id", when_used="json")
+    def serialize_mother_patient_id(self, v: Optional[Union[str, uuid.UUID]]) -> Optional[str]:
+        return str(v) if v is not None else None
 
 

@@ -261,6 +261,15 @@ def map_to_fhir_patient(patient_id: str, body: PatientCreate) -> dict[str, Any]:
     return validated_patient.model_dump(exclude_none=True)
 
 
+def _row_to_patient_out(r: Any) -> PatientOut:
+    """Helper to convert database row mapping to PatientOut model."""
+    d = dict(r)
+    d["id"] = str(d["id"])
+    if d.get("mother_patient_id") is not None:
+        d["mother_patient_id"] = str(d["mother_patient_id"])
+    return PatientOut(**d)
+
+
 @router.get("", response_model=list[PatientOut])
 async def list_patients(
     request: Request,
@@ -288,7 +297,7 @@ async def list_patients(
         )
         await s.commit()
     
-    return [PatientOut(id=str(r["id"]), **{k: r[k] for k in r.keys() if k != "id"}) for r in rows]
+    return [_row_to_patient_out(r) for r in rows]
 
 
 @router.post("", response_model=PatientOut, status_code=201)
@@ -385,7 +394,7 @@ async def create_patient(
         "timestamp": fhir_resource.get("meta", {}).get("lastUpdated")
     })
 
-    return PatientOut(id=str(row["id"]), **{k: row[k] for k in row.keys() if k != "id"})
+    return _row_to_patient_out(row)
 
 
 @router.get("/{patient_id}", response_model=PatientOut)
@@ -419,7 +428,7 @@ async def get_patient(
     if row is None:
         raise HTTPException(status_code=404, detail="patient not found")
 
-    return PatientOut(id=str(row["id"]), **{k: row[k] for k in row.keys() if k != "id"})
+    return _row_to_patient_out(row)
 
 
 @router.put("/{patient_id}", response_model=PatientOut)
@@ -502,5 +511,5 @@ async def update_patient(
         "timestamp": fhir_resource.get("meta", {}).get("lastUpdated")
     })
 
-    return PatientOut(id=str(row["id"]), **{k: row[k] for k in row.keys() if k != "id"})
+    return _row_to_patient_out(row)
 
