@@ -50,6 +50,9 @@ Every requirement has an ID (`PLT-002`, `REG-001`, `IAM-006`, `TEN-101`, `REF-06
 - **Readiness Engine & Safe Offboarding (T1-03, T3-01): BUILT & LIVE**
   - Full 6-check setup readiness evaluation engine with badge status rendering.
   - Dynamic topological cascade engine for safe tenant offboarding with database safeguards.
+- **Doctor & Staff Onboarding & Keycloak Identity Provisioning (TEN-105): BUILT & LIVE**
+  - Live Keycloak OIDC user identity provisioning via Keycloak Admin REST API accessible by both **Platform Operators** and **Tenant Administrators** (`role: admin`) for their tenant (`POST /tenants/{tenant_id}/invitations`).
+  - Automatically inserts/upserts PostgreSQL `practitioner` record, binds `attributes.tenant_id = [tenant_id]`, assigns realm roles (`physician`, `doctor`, `nurse`, `receptionist`, `billing`), and immediately applies the requested `temporary_password` via Keycloak user password reset API (`PUT /admin/realms/hms/users/{uid}/reset-password`) for immediate zero-friction login.
 - **Auth: real Keycloak/OIDC is LIVE** — RS256 validation with JWKS caching,
   `app.tenant_id` custom claim → `RequestContext`, roles from `realm_access.roles`.
   Declarative user profile enables `tenant_id` attribute propagation to tokens.
