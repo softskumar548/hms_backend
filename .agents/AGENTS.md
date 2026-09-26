@@ -53,6 +53,11 @@ Every requirement has an ID (`PLT-002`, `REG-001`, `IAM-006`, `TEN-101`, `REF-06
 - **Doctor & Staff Onboarding & Keycloak Identity Provisioning (TEN-105): BUILT & LIVE**
   - Live Keycloak OIDC user identity provisioning via Keycloak Admin REST API accessible by both **Platform Operators** and **Tenant Administrators** (`role: admin`) for their tenant (`POST /tenants/{tenant_id}/invitations`).
   - Automatically inserts/upserts PostgreSQL `practitioner` record, binds `attributes.tenant_id = [tenant_id]`, assigns realm roles (`physician`, `doctor`, `nurse`, `receptionist`, `billing`), and immediately applies the requested `temporary_password` via Keycloak user password reset API (`PUT /admin/realms/hms/users/{uid}/reset-password`) for immediate zero-friction login.
+- **Newborn & Neonate Registration Pipeline (REG-010): BUILT & LIVE**
+  - Full mother-infant registration pipeline (`POST /patients/newborn`) with mother UUID/UHID linking (`mother_patient_id`), birth weight, APGAR scores (1 min & 5 min), gestational age (weeks), delivery type (normal, c-section, assisted), birth complications, pediatric specialist assignment, automatic UHID generation, and audit logging.
+  - Safe serialization supporting UUID and string representations for mother and infant relationship tracking.
+- **Self-Healing Database & Schema Sync on Startup: BUILT & LIVE**
+  - Automatic runtime schema verification and DDL column synchronization (`mother_patient_id`, `birth_details`, `subscription_quotas`) on FastAPI application boot ensuring production and staging database parity.
 - **Auth: real Keycloak/OIDC is LIVE** — RS256 validation with JWKS caching,
   `app.tenant_id` custom claim → `RequestContext`, roles from `realm_access.roles`.
   Declarative user profile enables `tenant_id` attribute propagation to tokens.
