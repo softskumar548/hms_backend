@@ -1698,23 +1698,29 @@ async def get_tenant_quota_usage(
         pkg_name = feats.get("package_name") or ("HMS Basic Subscription Annual" if current_plan == "starter" else plan_info["name"])
         exp_date = feats.get("expiry_date", "25/07/2026")
 
+        tier_sms = plan_info.get("sms_limit", 10000 if current_plan == "enterprise" else (200 if current_plan == "starter" else 1000))
+        tier_email = plan_info.get("email_limit", 25000 if current_plan == "enterprise" else (500 if current_plan == "starter" else 2500))
+        tier_whatsapp = plan_info.get("whatsapp_limit", 50000 if current_plan == "enterprise" else (1000 if current_plan == "starter" else 5000))
+        tier_admins = plan_info.get("admins_limit", 99 if current_plan == "enterprise" else (1 if current_plan == "starter" else 5))
+        tier_staff = plan_info.get("staff_limit", 9999 if current_plan == "enterprise" else (3 if current_plan == "starter" else 50))
+
         return TenantQuotaUsageOut(
             tenant_id=tenant_id,
             package_name=pkg_name,
             expiry_date=exp_date,
-            admins_limit=int(feats.get("admins_limit", plan_info.get("admins_limit", 1))),
+            admins_limit=int(feats.get("admins_limit") or tier_admins),
             admins_used=1,
-            staff_limit=int(feats.get("staff_limit", plan_info.get("staff_limit", 3))),
+            staff_limit=int(feats.get("staff_limit") or tier_staff),
             staff_used=2,
             doctors_limit=int(plan_info.get("max_practitioners", 5)),
             doctors_used=practitioner_count,
             beds_limit=int(plan_info.get("max_beds", 15)),
             beds_used=bed_count,
-            sms_count_limit=int(feats.get("sms_count_limit", plan_info.get("sms_limit", 200))),
+            sms_count_limit=int(feats.get("sms_count_limit") or tier_sms),
             sms_count_used=int(feats.get("sms_count_used", 42)),
-            email_count_limit=int(feats.get("email_count_limit", plan_info.get("email_limit", 500))),
+            email_count_limit=int(feats.get("email_count_limit") or tier_email),
             email_count_used=int(feats.get("email_count_used", 118)),
-            whatsapp_count_limit=int(feats.get("whatsapp_count_limit", plan_info.get("whatsapp_limit", 1000))),
+            whatsapp_count_limit=int(feats.get("whatsapp_count_limit") or tier_whatsapp),
             whatsapp_count_used=int(feats.get("whatsapp_count_used", 312)),
             plan=pkg_name,
             status=tenant_status,
