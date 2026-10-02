@@ -98,20 +98,55 @@ async def auto_sync_schema() -> None:
         return
     try:
         admin_engine = create_async_engine(seed_url, echo=False)
+        statements = [
+            "ALTER TABLE patient ADD COLUMN IF NOT EXISTS is_newborn BOOLEAN NOT NULL DEFAULT FALSE;",
+            "ALTER TABLE patient ADD COLUMN IF NOT EXISTS mother_patient_id UUID REFERENCES patient(id) ON DELETE SET NULL;",
+            "ALTER TABLE patient ADD COLUMN IF NOT EXISTS birth_time TEXT;",
+            "ALTER TABLE patient ADD COLUMN IF NOT EXISTS birth_weight_grams INTEGER;",
+            "ALTER TABLE patient ADD COLUMN IF NOT EXISTS gestational_age_weeks INTEGER;",
+            "ALTER TABLE patient ADD COLUMN IF NOT EXISTS multiple_birth_order INTEGER NOT NULL DEFAULT 1;",
+            "ALTER TABLE patient ADD COLUMN IF NOT EXISTS delivery_type TEXT;",
+            "ALTER TABLE patient ADD COLUMN IF NOT EXISTS apgar_score_1min INTEGER;",
+            "ALTER TABLE patient ADD COLUMN IF NOT EXISTS apgar_score_5min INTEGER;",
+            "CREATE INDEX IF NOT EXISTS ix_patient_mother ON patient (tenant_id, mother_patient_id);",
+            "CREATE INDEX IF NOT EXISTS ix_patient_is_newborn ON patient (tenant_id, is_newborn);",
+            """
+            CREATE TABLE IF NOT EXISTS subscription_plan (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                code TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL,
+                description TEXT,
+                price_inr_monthly NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
+                price_inr_annual NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
+                max_practitioners INTEGER NOT NULL DEFAULT 10,
+                max_beds INTEGER NOT NULL DEFAULT 15,
+                max_monthly_encounters INTEGER NOT NULL DEFAULT 2500,
+                admins_limit INTEGER NOT NULL DEFAULT 5,
+                staff_limit INTEGER NOT NULL DEFAULT 50,
+                custom_catalogs_limit INTEGER NOT NULL DEFAULT 5,
+                catalog_item_limit INTEGER NOT NULL DEFAULT 50,
+                abdm_level TEXT NOT NULL DEFAULT 'M1 + M2 (HIP)',
+                sms_limit INTEGER NOT NULL DEFAULT 1000,
+                email_limit INTEGER NOT NULL DEFAULT 2500,
+                whatsapp_limit INTEGER NOT NULL DEFAULT 5000,
+                active BOOLEAN NOT NULL DEFAULT TRUE,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            """,
+            """
+            INSERT INTO subscription_plan (code, name, description, price_inr_monthly, price_inr_annual, max_practitioners, max_beds, max_monthly_encounters, admins_limit, staff_limit, custom_catalogs_limit, catalog_item_limit, abdm_level, sms_limit, email_limit, whatsapp_limit, active)
+            VALUES 
+              ('starter', 'Starter (Clinic)', 'Solo practitioner consultation chambers & outpatient clinics', 1999.00, 19990.00, 2, 0, 500, 1, 3, 0, 15, 'M1 (ABHA)', 200, 500, 1000, TRUE),
+              ('growth', 'Growth (Polyclinic)', 'Multi-specialty outpatient clinics and nursing homes with up to 15 beds', 7999.00, 79990.00, 10, 15, 2500, 5, 50, 5, 50, 'M1 + M2 (HIP)', 1000, 2500, 5000, TRUE),
+              ('enterprise', 'Enterprise (Hospital)', 'Comprehensive multi-department tertiary care hospitals and surgical centers', 24999.00, 249990.00, -1, -1, -1, 99, 9999, 999, 9999, 'M1 + M2 + M3 (HIU)', 10000, 25000, 50000, TRUE)
+            ON CONFLICT (code) DO NOTHING;
+            """,
+        ]
         async with admin_engine.begin() as conn:
-            await conn.execute(text("""
-                ALTER TABLE patient ADD COLUMN IF NOT EXISTS is_newborn BOOLEAN NOT NULL DEFAULT FALSE;
-                ALTER TABLE patient ADD COLUMN IF NOT EXISTS mother_patient_id UUID REFERENCES patient(id) ON DELETE SET NULL;
-                ALTER TABLE patient ADD COLUMN IF NOT EXISTS birth_time TEXT;
-                ALTER TABLE patient ADD COLUMN IF NOT EXISTS birth_weight_grams INTEGER;
-                ALTER TABLE patient ADD COLUMN IF NOT EXISTS gestational_age_weeks INTEGER;
-                ALTER TABLE patient ADD COLUMN IF NOT EXISTS multiple_birth_order INTEGER NOT NULL DEFAULT 1;
-                ALTER TABLE patient ADD COLUMN IF NOT EXISTS delivery_type TEXT;
-                ALTER TABLE patient ADD COLUMN IF NOT EXISTS apgar_score_1min INTEGER;
-                ALTER TABLE patient ADD COLUMN IF NOT EXISTS apgar_score_5min INTEGER;
-                CREATE INDEX IF NOT EXISTS ix_patient_mother ON patient (tenant_id, mother_patient_id);
-                CREATE INDEX IF NOT EXISTS ix_patient_is_newborn ON patient (tenant_id, is_newborn);
-            """))
+            for stmt in statements:
+                if stmt.strip():
+                    await conn.execute(text(stmt))
         await admin_engine.dispose()
         log.info("db_guard: auto_sync_schema applied successfully")
     except Exception as e:

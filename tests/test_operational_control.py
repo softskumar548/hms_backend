@@ -152,4 +152,58 @@ def test_saas_subscription_plan_and_quota_metering():
         client.delete(f"/tenants/{tenant_id}", headers=headers)
 
 
+def test_operator_subscription_plan_crud():
+    headers = {"Authorization": "Bearer dev.__operator__.operator"}
+    custom_plan_code = f"specialty_{uuid.uuid4().hex[:6]}"
+
+    # 1. List default plans (TEN-305)
+    resp_list = client.get("/tenants/plans", headers=headers)
+    assert resp_list.status_code == 200
+    plans = resp_list.json()
+    assert len(plans) >= 3
+
+    # 2. Operator creates custom plan
+    create_payload = {
+        "code": custom_plan_code,
+        "name": "Super Specialty Oncology & Transplant",
+        "description": "Custom high-tier plan with advanced OT and ICU limits",
+        "price_inr_monthly": 34999.0,
+        "price_inr_annual": 349990.0,
+        "max_practitioners": 50,
+        "max_beds": 100,
+        "max_monthly_encounters": 10000,
+        "admins_limit": 10,
+        "staff_limit": 200,
+        "custom_catalogs_limit": 20,
+        "catalog_item_limit": 500,
+        "abdm_level": "M1 + M2 + M3 (HIU)",
+        "sms_limit": 20000,
+        "email_limit": 50000,
+        "whatsapp_limit": 100000,
+        "active": True
+    }
+    resp_create = client.post("/tenants/plans", json=create_payload, headers=headers)
+    assert resp_create.status_code == 201
+    created = resp_create.json()
+    assert created["code"] == custom_plan_code
+    assert created["price_inr_monthly"] == 34999.0
+    assert created["max_beds"] == 100
+
+    # 3. Edit custom plan
+    edit_payload = {
+        "price_inr_monthly": 39999.0,
+        "max_beds": 150
+    }
+    resp_edit = client.put(f"/tenants/plans/{custom_plan_code}", json=edit_payload, headers=headers)
+    assert resp_edit.status_code == 200
+    edited = resp_edit.json()
+    assert edited["price_inr_monthly"] == 39999.0
+    assert edited["max_beds"] == 150
+
+    # 4. Remove custom plan safely
+    resp_del = client.delete(f"/tenants/plans/{custom_plan_code}", headers=headers)
+    assert resp_del.status_code == 200
+    assert resp_del.json()["status"] == "deleted"
+
+
 

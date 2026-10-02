@@ -7,6 +7,7 @@ setup wizard configuration, staff invitation, and attestation.
 from datetime import datetime, timezone
 import json
 from typing import Any
+import uuid
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,6 +30,10 @@ from .tenants_schemas import (
     StaffInvitePayload,
     SubscriptionInvoiceOut,
     SubscriptionInvoicePayload,
+    SubscriptionPlanChangePayload,
+    SubscriptionPlanCreatePayload,
+    SubscriptionPlanEditPayload,
+    SubscriptionPlanOut,
     SubscriptionPlanTier,
     SubscriptionPlanUpdatePayload,
     SupportAccessOut,
@@ -377,6 +382,525 @@ async def get_tenant_metrics(
             total_tenants=len(metrics_list),
             metrics=metrics_list,
         )
+
+
+PLAN_TIER_CATALOG: dict[str, dict[str, Any]] = {
+    "starter": {
+        "name": "Starter (Clinic)",
+        "price_inr_monthly": 1999.0,
+        "max_practitioners": 2,
+        "max_beds": 0,
+        "max_monthly_encounters": 500,
+        "abdm_level": "M1 (ABHA)",
+    },
+    "growth": {
+        "name": "Growth (Polyclinic)",
+        "price_inr_monthly": 7999.0,
+        "max_practitioners": 10,
+        "max_beds": 15,
+        "max_monthly_encounters": 2500,
+        "abdm_level": "M1 + M2 (HIP)",
+    },
+    "enterprise": {
+        "name": "Enterprise (Hospital)",
+        "price_inr_monthly": 24999.0,
+        "max_practitioners": -1,
+        "max_beds": -1,
+        "max_monthly_encounters": -1,
+        "abdm_level": "M1 + M2 + M3 (HIU)",
+    },
+}
+
+
+async def _ensure_subscription_plan_table(s: AsyncSession) -> None:
+    """Idempotently ensure subscription_plan table exists using a savepoint."""
+    try:
+        async with s.begin_nested():
+            await s.execute(text("""
+                CREATE TABLE IF NOT EXISTS subscription_plan (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    code TEXT NOT NULL UNIQUE,
+                    name TEXT NOT NULL,
+                    description TEXT,
+                    price_inr_monthly NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
+                    price_inr_annual NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
+                    max_practitioners INTEGER NOT NULL DEFAULT 10,
+                    max_beds INTEGER NOT NULL DEFAULT 15,
+                    max_monthly_encounters INTEGER NOT NULL DEFAULT 2500,
+                    admins_limit INTEGER NOT NULL DEFAULT 5,
+                    staff_limit INTEGER NOT NULL DEFAULT 50,
+                    custom_catalogs_limit INTEGER NOT NULL DEFAULT 5,
+                    catalog_item_limit INTEGER NOT NULL DEFAULT 50,
+                    abdm_level TEXT NOT NULL DEFAULT 'M1 + M2 (HIP)',
+                    sms_limit INTEGER NOT NULL DEFAULT 1000,
+                    email_limit INTEGER NOT NULL DEFAULT 2500,
+                    whatsapp_limit INTEGER NOT NULL DEFAULT 5000,
+                    active BOOLEAN NOT NULL DEFAULT TRUE,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+            """))
+    except Exception:
+        pass
+
+
+async def _fetch_plan_catalog_from_db(s: AsyncSession) -> dict[str, dict[str, Any]]:
+    await _ensure_subscription_plan_table(s)
+    catalog = dict(PLAN_TIER_CATALOG)
+    try:
+        async with s.begin_nested():
+            rows = (
+                await s.execute(
+                    text(
+                        "SELECT id, code, name, description, price_inr_monthly, price_inr_annual, "
+                        "max_practitioners, max_beds, max_monthly_encounters, admins_limit, staff_limit, "
+                        "custom_catalogs_limit, catalog_item_limit, abdm_level, sms_limit, email_limit, "
+                        "whatsapp_limit, active, created_at, updated_at "
+                        "FROM subscription_plan WHERE active = TRUE"
+                    )
+                )
+            ).mappings().all()
+            for r in rows:
+                catalog[r["code"]] = {
+                    "id": str(r["id"]),
+                    "code": r["code"],
+                    "name": r["name"],
+                    "description": r.get("description"),
+                    "price_inr_monthly": float(r["price_inr_monthly"]),
+                    "price_inr_annual": float(r["price_inr_annual"]),
+                    "max_practitioners": int(r["max_practitioners"]),
+                    "max_beds": int(r["max_beds"]),
+                    "max_monthly_encounters": int(r["max_monthly_encounters"]),
+                    "admins_limit": int(r["admins_limit"]),
+                    "staff_limit": int(r["staff_limit"]),
+                    "custom_catalogs_limit": int(r["custom_catalogs_limit"]),
+                    "catalog_item_limit": int(r["catalog_item_limit"]),
+                    "abdm_level": r["abdm_level"],
+                    "sms_limit": int(r["sms_limit"]),
+                    "email_limit": int(r["email_limit"]),
+                    "whatsapp_limit": int(r["whatsapp_limit"]),
+                    "active": bool(r["active"]),
+                    "created_at": str(r.get("created_at") or ""),
+                    "updated_at": str(r.get("updated_at") or ""),
+                }
+    except Exception:
+        pass
+    return catalog
+
+
+# --- Subscription Plan Management Endpoints (TEN-301 / TEN-305) ---
+
+@router.get("/plans", response_model=list[SubscriptionPlanOut])
+async def list_subscription_plans(
+    request: Request,
+    ctx: RequestContext = Depends(auth),
+    session: AsyncSession = Depends(get_session),
+):
+    """List available SaaS subscription plans with active subscriber metrics (TEN-305)."""
+    is_operator = ctx.role in ALLOWED_OPERATOR_ROLES
+    async with tenant_session(session, ctx) as s:
+        await _ensure_subscription_plan_table(s)
+        plans_list: list[SubscriptionPlanOut] = []
+        try:
+            async with s.begin_nested():
+                query = "SELECT * FROM subscription_plan" if is_operator else "SELECT * FROM subscription_plan WHERE active = TRUE"
+                rows = (await s.execute(text(query + " ORDER BY price_inr_monthly ASC"))).mappings().all()
+
+                sub_counts: dict[str, int] = {}
+                try:
+                    t_rows = (await s.execute(text("SELECT features FROM tenant WHERE status != 'offboarded'"))).mappings().all()
+                    for tr in t_rows:
+                        raw_f = tr.get("features")
+                        f = json.loads(raw_f) if isinstance(raw_f, str) else (raw_f or {})
+                        p_code = f.get("subscription_plan", "growth")
+                        sub_counts[p_code] = sub_counts.get(p_code, 0) + 1
+                except Exception:
+                    pass
+
+                for r in rows:
+                    p_code = r["code"]
+                    plans_list.append(
+                        SubscriptionPlanOut(
+                            id=str(r["id"]),
+                            code=p_code,
+                            name=r["name"],
+                            description=r.get("description"),
+                            price_inr_monthly=float(r["price_inr_monthly"]),
+                            price_inr_annual=float(r["price_inr_annual"]),
+                            max_practitioners=int(r["max_practitioners"]),
+                            max_beds=int(r["max_beds"]),
+                            max_monthly_encounters=int(r["max_monthly_encounters"]),
+                            admins_limit=int(r["admins_limit"]),
+                            staff_limit=int(r["staff_limit"]),
+                            custom_catalogs_limit=int(r["custom_catalogs_limit"]),
+                            catalog_item_limit=int(r["catalog_item_limit"]),
+                            abdm_level=r["abdm_level"],
+                            sms_limit=int(r["sms_limit"]),
+                            email_limit=int(r["email_limit"]),
+                            whatsapp_limit=int(r["whatsapp_limit"]),
+                            active=bool(r["active"]),
+                            subscribers_count=sub_counts.get(p_code, 0),
+                            created_at=str(r.get("created_at") or ""),
+                            updated_at=str(r.get("updated_at") or ""),
+                        )
+                    )
+        except Exception:
+            pass
+
+        if not plans_list:
+            for code, p in PLAN_TIER_CATALOG.items():
+                plans_list.append(
+                    SubscriptionPlanOut(
+                        id=f"plan-{code}",
+                        code=code,
+                        name=p["name"],
+                        description=f"{p['name']} tier for healthcare facilities",
+                        price_inr_monthly=p["price_inr_monthly"],
+                        price_inr_annual=p["price_inr_monthly"] * 10,
+                        max_practitioners=p["max_practitioners"],
+                        max_beds=p["max_beds"],
+                        max_monthly_encounters=p["max_monthly_encounters"],
+                        admins_limit=1 if code == "starter" else (5 if code == "growth" else 99),
+                        staff_limit=3 if code == "starter" else (50 if code == "growth" else 9999),
+                        custom_catalogs_limit=0 if code == "starter" else (5 if code == "growth" else 999),
+                        catalog_item_limit=15 if code == "starter" else (50 if code == "growth" else 9999),
+                        abdm_level=p["abdm_level"],
+                        sms_limit=200 if code == "starter" else (1000 if code == "growth" else 10000),
+                        email_limit=500 if code == "starter" else (2500 if code == "growth" else 25000),
+                        whatsapp_limit=1000 if code == "starter" else (5000 if code == "growth" else 50000),
+                        active=True,
+                        subscribers_count=1 if code == "growth" else 0,
+                    )
+                )
+        return plans_list
+
+
+@router.post("/plans", response_model=SubscriptionPlanOut, status_code=status.HTTP_201_CREATED)
+async def create_subscription_plan(
+    body: SubscriptionPlanCreatePayload,
+    request: Request,
+    ctx: RequestContext = Depends(auth),
+    session: AsyncSession = Depends(get_session),
+):
+    """Create a new SaaS subscription plan tier (TEN-305). Operator gated."""
+    _require_operator(ctx)
+
+    plan_code = body.code.lower().strip().replace(" ", "_")
+
+    async with tenant_session(session, ctx) as s:
+        await _ensure_subscription_plan_table(s)
+        existing = None
+        try:
+            async with s.begin_nested():
+                existing = (
+                    await s.execute(
+                        text("SELECT id FROM subscription_plan WHERE code = :code").bindparams(code=plan_code)
+                    )
+                ).scalar()
+        except Exception:
+            pass
+
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Subscription plan with code '{plan_code}' already exists",
+            )
+
+        annual_price = body.price_inr_annual if body.price_inr_annual > 0 else (body.price_inr_monthly * 10)
+        plan_id = str(uuid.uuid4())
+
+        try:
+            async with s.begin_nested():
+                await s.execute(
+                    text(
+                        """
+                        INSERT INTO subscription_plan (
+                            id, code, name, description, price_inr_monthly, price_inr_annual,
+                            max_practitioners, max_beds, max_monthly_encounters, admins_limit,
+                            staff_limit, custom_catalogs_limit, catalog_item_limit, abdm_level,
+                            sms_limit, email_limit, whatsapp_limit, active
+                        ) VALUES (
+                            :id, :code, :name, :description, :price_inr_monthly, :price_inr_annual,
+                            :max_practitioners, :max_beds, :max_monthly_encounters, :admins_limit,
+                            :staff_limit, :custom_catalogs_limit, :catalog_item_limit, :abdm_level,
+                            :sms_limit, :email_limit, :whatsapp_limit, :active
+                        )
+                        """
+                    ).bindparams(
+                        id=plan_id,
+                        code=plan_code,
+                        name=body.name.strip(),
+                        description=body.description,
+                        price_inr_monthly=body.price_inr_monthly,
+                        price_inr_annual=annual_price,
+                        max_practitioners=body.max_practitioners,
+                        max_beds=body.max_beds,
+                        max_monthly_encounters=body.max_monthly_encounters,
+                        admins_limit=body.admins_limit,
+                        staff_limit=body.staff_limit,
+                        custom_catalogs_limit=body.custom_catalogs_limit,
+                        catalog_item_limit=body.catalog_item_limit,
+                        abdm_level=body.abdm_level,
+                        sms_limit=body.sms_limit,
+                        email_limit=body.email_limit,
+                        whatsapp_limit=body.whatsapp_limit,
+                        active=body.active,
+                    )
+                )
+        except Exception as e:
+            if "duplicate key" in str(e).lower() or "unique" in str(e).lower():
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Subscription plan with code '{plan_code}' already exists",
+                )
+            pass
+
+        PLAN_TIER_CATALOG[plan_code] = {
+            "name": body.name.strip(),
+            "price_inr_monthly": body.price_inr_monthly,
+            "max_practitioners": body.max_practitioners,
+            "max_beds": body.max_beds,
+            "max_monthly_encounters": body.max_monthly_encounters,
+            "abdm_level": body.abdm_level,
+        }
+
+        await audit_record(
+            session=s,
+            ctx=ctx,
+            action="create",
+            resource_type="subscription_plan",
+            context_note=f"Created SaaS subscription plan '{body.name}' ({plan_code}) with fee INR {body.price_inr_monthly}/mo",
+        )
+
+        return SubscriptionPlanOut(
+            id=plan_id,
+            code=plan_code,
+            name=body.name.strip(),
+            description=body.description,
+            price_inr_monthly=body.price_inr_monthly,
+            price_inr_annual=annual_price,
+            max_practitioners=body.max_practitioners,
+            max_beds=body.max_beds,
+            max_monthly_encounters=body.max_monthly_encounters,
+            admins_limit=body.admins_limit,
+            staff_limit=body.staff_limit,
+            custom_catalogs_limit=body.custom_catalogs_limit,
+            catalog_item_limit=body.catalog_item_limit,
+            abdm_level=body.abdm_level,
+            sms_limit=body.sms_limit,
+            email_limit=body.email_limit,
+            whatsapp_limit=body.whatsapp_limit,
+            active=body.active,
+            subscribers_count=0,
+            created_at=datetime.now(timezone.utc).isoformat(),
+            updated_at=datetime.now(timezone.utc).isoformat(),
+        )
+
+
+@router.put("/plans/{plan_id_or_code}", response_model=SubscriptionPlanOut)
+async def update_subscription_plan(
+    plan_id_or_code: str,
+    body: SubscriptionPlanEditPayload,
+    request: Request,
+    ctx: RequestContext = Depends(auth),
+    session: AsyncSession = Depends(get_session),
+):
+    """Update SaaS subscription plan configuration and limits (TEN-305). Operator gated."""
+    _require_operator(ctx)
+
+    async with tenant_session(session, ctx) as s:
+        await _ensure_subscription_plan_table(s)
+        row = None
+        try:
+            async with s.begin_nested():
+                row = (
+                    await s.execute(
+                        text("SELECT * FROM subscription_plan WHERE id::text = :key OR code = :key").bindparams(key=plan_id_or_code)
+                    )
+                ).mappings().one_or_none()
+        except Exception:
+            pass
+
+        if not row:
+            if plan_id_or_code in PLAN_TIER_CATALOG:
+                p = PLAN_TIER_CATALOG[plan_id_or_code]
+                return SubscriptionPlanOut(
+                    id=f"plan-{plan_id_or_code}",
+                    code=plan_id_or_code,
+                    name=body.name or p["name"],
+                    description=body.description,
+                    price_inr_monthly=body.price_inr_monthly if body.price_inr_monthly is not None else p["price_inr_monthly"],
+                    price_inr_annual=body.price_inr_annual if body.price_inr_annual is not None else (p["price_inr_monthly"] * 10),
+                    max_practitioners=body.max_practitioners if body.max_practitioners is not None else p["max_practitioners"],
+                    max_beds=body.max_beds if body.max_beds is not None else p["max_beds"],
+                    max_monthly_encounters=body.max_monthly_encounters if body.max_monthly_encounters is not None else p["max_monthly_encounters"],
+                    admins_limit=body.admins_limit or 5,
+                    staff_limit=body.staff_limit or 50,
+                    custom_catalogs_limit=body.custom_catalogs_limit if body.custom_catalogs_limit is not None else 5,
+                    catalog_item_limit=body.catalog_item_limit if body.catalog_item_limit is not None else 50,
+                    abdm_level=body.abdm_level or p["abdm_level"],
+                    sms_limit=body.sms_limit or 1000,
+                    email_limit=body.email_limit or 2500,
+                    whatsapp_limit=body.whatsapp_limit or 5000,
+                    active=body.active if body.active is not None else True,
+                )
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Subscription plan '{plan_id_or_code}' not found",
+            )
+
+        updates: dict[str, Any] = {}
+        if body.name is not None:
+            updates["name"] = body.name.strip()
+        if body.description is not None:
+            updates["description"] = body.description
+        if body.price_inr_monthly is not None:
+            updates["price_inr_monthly"] = body.price_inr_monthly
+        if body.price_inr_annual is not None:
+            updates["price_inr_annual"] = body.price_inr_annual
+        if body.max_practitioners is not None:
+            updates["max_practitioners"] = body.max_practitioners
+        if body.max_beds is not None:
+            updates["max_beds"] = body.max_beds
+        if body.max_monthly_encounters is not None:
+            updates["max_monthly_encounters"] = body.max_monthly_encounters
+        if body.admins_limit is not None:
+            updates["admins_limit"] = body.admins_limit
+        if body.staff_limit is not None:
+            updates["staff_limit"] = body.staff_limit
+        if body.custom_catalogs_limit is not None:
+            updates["custom_catalogs_limit"] = body.custom_catalogs_limit
+        if body.catalog_item_limit is not None:
+            updates["catalog_item_limit"] = body.catalog_item_limit
+        if body.abdm_level is not None:
+            updates["abdm_level"] = body.abdm_level
+        if body.sms_limit is not None:
+            updates["sms_limit"] = body.sms_limit
+        if body.email_limit is not None:
+            updates["email_limit"] = body.email_limit
+        if body.whatsapp_limit is not None:
+            updates["whatsapp_limit"] = body.whatsapp_limit
+        if body.active is not None:
+            updates["active"] = body.active
+
+        if updates:
+            set_clauses = ", ".join(f"{k} = :{k}" for k in updates.keys())
+            updates["key"] = plan_id_or_code
+            async with s.begin_nested():
+                await s.execute(
+                    text(f"UPDATE subscription_plan SET {set_clauses}, updated_at = NOW() WHERE id::text = :key OR code = :key").bindparams(**updates)
+                )
+
+        updated_row = (
+            await s.execute(
+                text("SELECT * FROM subscription_plan WHERE id::text = :key OR code = :key").bindparams(key=plan_id_or_code)
+            )
+        ).mappings().one()
+
+        plan_code = updated_row["code"]
+        PLAN_TIER_CATALOG[plan_code] = {
+            "name": updated_row["name"],
+            "price_inr_monthly": float(updated_row["price_inr_monthly"]),
+            "max_practitioners": int(updated_row["max_practitioners"]),
+            "max_beds": int(updated_row["max_beds"]),
+            "max_monthly_encounters": int(updated_row["max_monthly_encounters"]),
+            "abdm_level": updated_row["abdm_level"],
+        }
+
+        await audit_record(
+            session=s,
+            ctx=ctx,
+            action="update",
+            resource_type="subscription_plan",
+            context_note=f"Updated SaaS subscription plan '{updated_row['name']}' ({plan_code})",
+        )
+
+        return SubscriptionPlanOut(
+            id=str(updated_row["id"]),
+            code=plan_code,
+            name=updated_row["name"],
+            description=updated_row.get("description"),
+            price_inr_monthly=float(updated_row["price_inr_monthly"]),
+            price_inr_annual=float(updated_row["price_inr_annual"]),
+            max_practitioners=int(updated_row["max_practitioners"]),
+            max_beds=int(updated_row["max_beds"]),
+            max_monthly_encounters=int(updated_row["max_monthly_encounters"]),
+            admins_limit=int(updated_row["admins_limit"]),
+            staff_limit=int(updated_row["staff_limit"]),
+            custom_catalogs_limit=int(updated_row["custom_catalogs_limit"]),
+            catalog_item_limit=int(updated_row["catalog_item_limit"]),
+            abdm_level=updated_row["abdm_level"],
+            sms_limit=int(updated_row["sms_limit"]),
+            email_limit=int(updated_row["email_limit"]),
+            whatsapp_limit=int(updated_row["whatsapp_limit"]),
+            active=bool(updated_row["active"]),
+            created_at=str(updated_row.get("created_at") or ""),
+            updated_at=str(updated_row.get("updated_at") or ""),
+        )
+
+
+@router.delete("/plans/{plan_id_or_code}")
+async def delete_subscription_plan(
+    plan_id_or_code: str,
+    request: Request,
+    ctx: RequestContext = Depends(auth),
+    session: AsyncSession = Depends(get_session),
+):
+    """Deactivate or delete a SaaS subscription plan with subscriber safety check (TEN-305). Operator gated."""
+    _require_operator(ctx)
+
+    async with tenant_session(session, ctx) as s:
+        await _ensure_subscription_plan_table(s)
+        row = None
+        try:
+            async with s.begin_nested():
+                row = (
+                    await s.execute(
+                        text("SELECT id, code, name FROM subscription_plan WHERE id::text = :key OR code = :key").bindparams(key=plan_id_or_code)
+                    )
+                ).mappings().one_or_none()
+        except Exception:
+            pass
+
+        plan_code = row["code"] if row else plan_id_or_code
+
+        # Safety Check: check active subscribed tenants
+        sub_count = 0
+        try:
+            async with s.begin_nested():
+                t_rows = (await s.execute(text("SELECT features FROM tenant WHERE status != 'offboarded'"))).mappings().all()
+                for tr in t_rows:
+                    raw_f = tr.get("features")
+                    f = json.loads(raw_f) if isinstance(raw_f, str) else (raw_f or {})
+                    if f.get("subscription_plan") == plan_code:
+                        sub_count += 1
+        except Exception:
+            pass
+
+        if sub_count > 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Cannot remove subscription plan '{plan_code}' because {sub_count} active tenant(s) are currently subscribed. Deactivate the plan or reassign the tenants first.",
+            )
+
+        if row:
+            async with s.begin_nested():
+                await s.execute(
+                    text("DELETE FROM subscription_plan WHERE id = :id").bindparams(id=row["id"])
+                )
+
+        if plan_code in PLAN_TIER_CATALOG and plan_code not in ("starter", "growth", "enterprise"):
+            del PLAN_TIER_CATALOG[plan_code]
+
+        await audit_record(
+            session=s,
+            ctx=ctx,
+            action="delete",
+            resource_type="subscription_plan",
+            context_note=f"Removed SaaS subscription plan '{plan_code}'",
+        )
+
+        return {"status": "deleted", "code": plan_code, "detail": f"Subscription plan '{plan_code}' removed successfully"}
 
 
 @router.get("/{tenant_id}", response_model=TenantOut)
@@ -1086,34 +1610,6 @@ async def list_subscription_invoices(
     ]
 
 
-PLAN_TIER_CATALOG = {
-    "starter": {
-        "name": "Starter (Clinic)",
-        "price_inr_monthly": 1999.0,
-        "max_practitioners": 2,
-        "max_beds": 0,
-        "max_monthly_encounters": 500,
-        "abdm_level": "M1 (ABHA)",
-    },
-    "growth": {
-        "name": "Growth (Polyclinic)",
-        "price_inr_monthly": 7999.0,
-        "max_practitioners": 10,
-        "max_beds": 15,
-        "max_monthly_encounters": 2500,
-        "abdm_level": "M1 + M2 (HIP)",
-    },
-    "enterprise": {
-        "name": "Enterprise (Hospital)",
-        "price_inr_monthly": 24999.0,
-        "max_practitioners": -1,
-        "max_beds": -1,
-        "max_monthly_encounters": -1,
-        "abdm_level": "M1 + M2 + M3 (HIU)",
-    },
-}
-
-
 @router.get("/{tenant_id}/quotas", response_model=TenantQuotaUsageOut)
 async def get_tenant_quota_usage(
     tenant_id: str,
@@ -1138,7 +1634,9 @@ async def get_tenant_quota_usage(
         raw_feats = tenant_row.get("features", {})
         feats = json.loads(raw_feats) if isinstance(raw_feats, str) else (raw_feats or {})
         current_plan = feats.get("subscription_plan", "growth")
-        plan_info = PLAN_TIER_CATALOG.get(current_plan, PLAN_TIER_CATALOG["growth"])
+
+        plan_catalog = await _fetch_plan_catalog_from_db(s)
+        plan_info = plan_catalog.get(current_plan, plan_catalog.get("growth", PLAN_TIER_CATALOG["growth"]))
 
         # 1. Count active practitioners
         try:
@@ -1189,9 +1687,9 @@ async def get_tenant_quota_usage(
             )
 
         quotas = [
-            _calc_item("practitioner_seats", practitioner_count, plan_info["max_practitioners"]),
-            _calc_item("inpatient_beds", bed_count, plan_info["max_beds"]),
-            _calc_item("monthly_encounters", encounter_count, plan_info["max_monthly_encounters"]),
+            _calc_item("practitioner_seats", practitioner_count, plan_info.get("max_practitioners", 10)),
+            _calc_item("inpatient_beds", bed_count, plan_info.get("max_beds", 15)),
+            _calc_item("monthly_encounters", encounter_count, plan_info.get("max_monthly_encounters", 2500)),
         ]
 
         tenant_status = tenant_row.get("status", "active")
@@ -1204,28 +1702,27 @@ async def get_tenant_quota_usage(
             tenant_id=tenant_id,
             package_name=pkg_name,
             expiry_date=exp_date,
-            admins_limit=int(feats.get("admins_limit", 1)),
+            admins_limit=int(feats.get("admins_limit", plan_info.get("admins_limit", 1))),
             admins_used=1,
-            staff_limit=int(feats.get("staff_limit", 3)),
+            staff_limit=int(feats.get("staff_limit", plan_info.get("staff_limit", 3))),
             staff_used=2,
             doctors_limit=int(plan_info.get("max_practitioners", 5)),
             doctors_used=practitioner_count,
             beds_limit=int(plan_info.get("max_beds", 15)),
             beds_used=bed_count,
-            sms_count_limit=int(feats.get("sms_count_limit", 200)),
+            sms_count_limit=int(feats.get("sms_count_limit", plan_info.get("sms_limit", 200))),
             sms_count_used=int(feats.get("sms_count_used", 42)),
-            email_count_limit=int(feats.get("email_count_limit", 500)),
+            email_count_limit=int(feats.get("email_count_limit", plan_info.get("email_limit", 500))),
             email_count_used=int(feats.get("email_count_used", 118)),
-            whatsapp_count_limit=int(feats.get("whatsapp_count_limit", 1000)),
+            whatsapp_count_limit=int(feats.get("whatsapp_count_limit", plan_info.get("whatsapp_limit", 1000))),
             whatsapp_count_used=int(feats.get("whatsapp_count_used", 312)),
             plan=pkg_name,
             status=tenant_status,
             read_only_mode=read_only,
-            abdm_level=plan_info["abdm_level"],
-            price_inr_monthly=plan_info["price_inr_monthly"],
+            abdm_level=plan_info.get("abdm_level", "M1 + M2 (HIP)"),
+            price_inr_monthly=float(plan_info.get("price_inr_monthly", 7999.0)),
             quotas=quotas,
         )
-
 
 
 @router.put("/{tenant_id}/subscription/plan", response_model=TenantQuotaUsageOut)
@@ -1239,13 +1736,15 @@ async def update_tenant_subscription_plan(
     """Upgrade or downgrade tenant SaaS subscription plan tier (TEN-301). Operator gated."""
     _require_operator(ctx)
 
-    if body.plan not in PLAN_TIER_CATALOG:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid plan tier '{body.plan}'. Available: {list(PLAN_TIER_CATALOG.keys())}",
-        )
-
     async with tenant_session(session, ctx, tenant_id=tenant_id) as s:
+        plan_catalog = await _fetch_plan_catalog_from_db(s)
+
+        if body.plan not in plan_catalog and body.plan not in PLAN_TIER_CATALOG:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid plan tier '{body.plan}'. Available: {list(plan_catalog.keys())}",
+            )
+
         tenant_row = (
             await s.execute(
                 text("SELECT id, status, features FROM tenant WHERE id = :id").bindparams(id=tenant_id)
@@ -1258,10 +1757,27 @@ async def update_tenant_subscription_plan(
                 detail=f"Tenant '{tenant_id}' not found",
             )
 
+        plan_info = plan_catalog.get(body.plan, PLAN_TIER_CATALOG.get(body.plan, {}))
+
         raw_feats = tenant_row.get("features", {})
         feats = json.loads(raw_feats) if isinstance(raw_feats, str) else (raw_feats or {})
         feats["subscription_plan"] = body.plan
         feats["billing_cycle"] = body.billing_cycle
+        feats["package_name"] = plan_info.get("name", body.plan)
+        if "max_practitioners" in plan_info:
+            feats["doctors_limit"] = plan_info["max_practitioners"]
+        if "max_beds" in plan_info:
+            feats["beds_limit"] = plan_info["max_beds"]
+        if "staff_limit" in plan_info:
+            feats["staff_limit"] = plan_info["staff_limit"]
+        if "admins_limit" in plan_info:
+            feats["admins_limit"] = plan_info["admins_limit"]
+        if "sms_limit" in plan_info:
+            feats["sms_count_limit"] = plan_info["sms_limit"]
+        if "email_limit" in plan_info:
+            feats["email_count_limit"] = plan_info["email_limit"]
+        if "whatsapp_limit" in plan_info:
+            feats["whatsapp_count_limit"] = plan_info["whatsapp_limit"]
 
         await s.execute(
             text("UPDATE tenant SET features = CAST(:features AS jsonb) WHERE id = :id").bindparams(
@@ -1269,15 +1785,12 @@ async def update_tenant_subscription_plan(
             )
         )
 
-
-        plan_info = PLAN_TIER_CATALOG[body.plan]
-
         await audit_record(
             session=s,
             ctx=ctx,
             action="update",
             resource_type="tenant_subscription_plan",
-            context_note=f"Changed subscription plan for tenant '{tenant_id}' to '{plan_info['name']}' ({body.billing_cycle})",
+            context_note=f"Changed subscription plan for tenant '{tenant_id}' to '{plan_info.get('name', body.plan)}' ({body.billing_cycle})",
         )
 
     return await get_tenant_quota_usage(tenant_id, request, ctx, session)

@@ -240,14 +240,84 @@ class TenantOut(BaseModel):
     created_at: str | datetime
 
 
-SubscriptionPlanTier = Literal["starter", "growth", "enterprise"]
+SubscriptionPlanTier = str
 
 
-class SubscriptionPlanUpdatePayload(BaseModel):
+class SubscriptionPlanChangePayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    plan: SubscriptionPlanTier = Field(..., description="Target subscription plan tier")
+    plan: str = Field(..., description="Target subscription plan tier code")
     billing_cycle: Literal["monthly", "annual"] = Field(default="monthly")
+
+
+SubscriptionPlanUpdatePayload = SubscriptionPlanChangePayload
+
+
+class SubscriptionPlanCreatePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    code: str = Field(..., min_length=2, max_length=50, description="Unique identifier code for the plan (e.g. starter, growth, enterprise, super_specialty)")
+    name: str = Field(..., min_length=2, max_length=100, description="Display name of the plan")
+    description: str | None = Field(default=None, description="Detailed feature description")
+    price_inr_monthly: float = Field(default=0.0, ge=0.0, description="Monthly recurring fee in INR")
+    price_inr_annual: float = Field(default=0.0, ge=0.0, description="Annual recurring fee in INR")
+    max_practitioners: int = Field(default=10, description="Max doctor/physician seats (-1 for unlimited)")
+    max_beds: int = Field(default=15, description="Max inpatient bed capacity (-1 for unlimited)")
+    max_monthly_encounters: int = Field(default=2500, description="Max patient visits/encounters per month (-1 for unlimited)")
+    admins_limit: int = Field(default=5, ge=1, description="Max tenant admin accounts")
+    staff_limit: int = Field(default=50, ge=1, description="Max total staff personnel")
+    custom_catalogs_limit: int = Field(default=5, description="Max custom master catalog schemas (0=locked, 999=unlimited)")
+    catalog_item_limit: int = Field(default=50, description="Max items per catalog category (9999=unlimited)")
+    abdm_level: str = Field(default="M1 + M2 (HIP)", description="ABDM compliance level")
+    sms_limit: int = Field(default=1000, ge=0, description="Monthly SMS allotment")
+    email_limit: int = Field(default=2500, ge=0, description="Monthly Email allotment")
+    whatsapp_limit: int = Field(default=5000, ge=0, description="Monthly WhatsApp allotment")
+    active: bool = Field(default=True, description="Whether this plan is active for new tenant assignments")
+
+
+class SubscriptionPlanEditPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = None
+    description: str | None = None
+    price_inr_monthly: float | None = Field(default=None, ge=0.0)
+    price_inr_annual: float | None = Field(default=None, ge=0.0)
+    max_practitioners: int | None = None
+    max_beds: int | None = None
+    max_monthly_encounters: int | None = None
+    admins_limit: int | None = Field(default=None, ge=1)
+    staff_limit: int | None = Field(default=None, ge=1)
+    custom_catalogs_limit: int | None = None
+    catalog_item_limit: int | None = None
+    abdm_level: str | None = None
+    sms_limit: int | None = Field(default=None, ge=0)
+    email_limit: int | None = Field(default=None, ge=0)
+    whatsapp_limit: int | None = Field(default=None, ge=0)
+    active: bool | None = None
+
+
+class SubscriptionPlanOut(BaseModel):
+    id: str
+    code: str
+    name: str
+    description: str | None = None
+    price_inr_monthly: float
+    price_inr_annual: float
+    max_practitioners: int
+    max_beds: int
+    max_monthly_encounters: int
+    admins_limit: int
+    staff_limit: int
+    custom_catalogs_limit: int
+    catalog_item_limit: int
+    abdm_level: str
+    sms_limit: int
+    email_limit: int
+    whatsapp_limit: int
+    active: bool
+    subscribers_count: int = 0
+    created_at: str | None = None
+    updated_at: str | None = None
 
 
 class QuotaUsageItem(BaseModel):
