@@ -111,6 +111,8 @@ CREATE TABLE IF NOT EXISTS audit_event (
     occurred_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS ix_audit_tenant_time ON audit_event (tenant_id, occurred_at);
+REVOKE UPDATE, DELETE, TRUNCATE ON TABLE audit_event FROM hms_app;
+GRANT SELECT, INSERT ON TABLE audit_event TO hms_app;
 
 -- 3. Patient Consent Table
 CREATE TABLE IF NOT EXISTS patient_consent (
@@ -669,7 +671,10 @@ END $$;
 GRANT SELECT, INSERT, UPDATE, DELETE ON tenant TO hms_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON subscription_plan TO hms_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON tenant_permissions TO hms_app;
-GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO hms_app;
-GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO hms_app;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO hms_app;
 GRANT ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA public TO hms_app;
+
+-- PLT-005 Append-Only Immutability: hms_app MUST NEVER have UPDATE, DELETE, or TRUNCATE on audit_event
+REVOKE UPDATE, DELETE, TRUNCATE ON TABLE audit_event FROM hms_app;
+GRANT SELECT, INSERT ON TABLE audit_event TO hms_app;
 

@@ -132,7 +132,7 @@ async def auto_sync_schema() -> None:
             "ALTER TABLE bed FORCE ROW LEVEL SECURITY;",
             "DROP POLICY IF EXISTS bed_isolation ON bed;",
             "CREATE POLICY bed_isolation ON bed USING (tenant_id = current_tenant()) WITH CHECK (tenant_id = current_tenant());",
-            "GRANT ALL PRIVILEGES ON TABLE bed TO hms_app;",
+            "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE bed TO hms_app;",
             """
             CREATE TABLE IF NOT EXISTS subscription_plan (
                 id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -164,10 +164,11 @@ async def auto_sync_schema() -> None:
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             );
             """,
-            "GRANT ALL PRIVILEGES ON TABLE subscription_plan TO hms_app;",
-            "GRANT ALL PRIVILEGES ON TABLE tenant_permissions TO hms_app;",
-            "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO hms_app;",
-            "GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO hms_app;",
+            "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE subscription_plan TO hms_app;",
+            "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE tenant_permissions TO hms_app;",
+            "GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO hms_app;",
+            "REVOKE UPDATE, DELETE, TRUNCATE ON TABLE audit_event FROM hms_app;",
+            "GRANT SELECT, INSERT ON TABLE audit_event TO hms_app;",
             """
             INSERT INTO subscription_plan (code, name, description, price_inr_monthly, price_inr_annual, max_practitioners, max_beds, max_monthly_encounters, admins_limit, staff_limit, custom_catalogs_limit, catalog_item_limit, abdm_level, sms_limit, email_limit, whatsapp_limit, active)
             VALUES 
