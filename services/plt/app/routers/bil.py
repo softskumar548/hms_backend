@@ -92,7 +92,7 @@ async def register_coverage(
         if body.scheme_type.lower() in ("aarogyasri", "pmjay"):
             patient = (
                 await s.execute(
-                    text("SELECT aadhaar_last_four FROM patient WHERE id = :pid").bindparams(pid=body.patient_id)
+                    text("SELECT aadhaar_last_four FROM patient WHERE id = CAST(:pid AS uuid)").bindparams(pid=str(body.patient_id))
                 )
             ).mappings().one_or_none()
 
@@ -106,10 +106,10 @@ async def register_coverage(
             await s.execute(
                 text(
                     "INSERT INTO patient_coverage (tenant_id, patient_id, scheme_type, plan_name, member_id, validity_start, validity_end, patient_share_percent) "
-                    "VALUES (:tid, :patient_id, :scheme_type, :plan_name, :member_id, :validity_start, :validity_end, :share) "
+                    "VALUES (:tid, CAST(:patient_id AS uuid), :scheme_type, :plan_name, :member_id, :validity_start, :validity_end, :share) "
                     "RETURNING id, patient_id, scheme_type, plan_name, member_id, validity_start, validity_end, patient_share_percent, created_at"
                 ).bindparams(
-                    tid=ctx.tenant_id, patient_id=body.patient_id, scheme_type=body.scheme_type,
+                    tid=ctx.tenant_id, patient_id=str(body.patient_id), scheme_type=body.scheme_type,
                     plan_name=body.plan_name, member_id=body.member_id, validity_start=body.validity_start,
                     validity_end=body.validity_end, share=body.patient_share_percent
                 )
@@ -136,11 +136,12 @@ async def create_invoice(
             await s.execute(
                 text(
                     "INSERT INTO invoice (tenant_id, patient_id, encounter_id, coverage_id, status) "
-                    "VALUES (:tid, :patient_id, :encounter_id, :cov_id, 'draft') "
+                    "VALUES (:tid, CAST(:patient_id AS uuid), :encounter_id, :cov_id, 'draft') "
                     "RETURNING id, patient_id, encounter_id, status, coverage_id, total_amount, payer_responsibility, patient_responsibility, created_at, updated_at"
                 ).bindparams(
-                    tid=ctx.tenant_id, patient_id=body.patient_id,
-                    encounter_id=body.encounter_id, cov_id=body.coverage_id
+                    tid=ctx.tenant_id, patient_id=str(body.patient_id),
+                    encounter_id=str(body.encounter_id) if body.encounter_id else None,
+                    cov_id=str(body.coverage_id) if body.coverage_id else None
                 )
             )
         ).mappings().one()
