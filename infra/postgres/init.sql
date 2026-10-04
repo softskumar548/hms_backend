@@ -25,6 +25,21 @@ BEGIN
     END IF;
 END $$;
 
+-- Schema and database privileges (PostgreSQL 15+ revokes public CREATE by default)
+GRANT ALL PRIVILEGES ON DATABASE hms TO hms_app;
+GRANT ALL ON SCHEMA public TO hms_app;
+GRANT USAGE, CREATE ON SCHEMA public TO hms_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO hms_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO hms_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON ROUTINES TO hms_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SCHEMAS TO hms_app;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON TABLES TO hms_app;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON SEQUENCES TO hms_app;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON ROUTINES TO hms_app;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON SCHEMAS TO hms_app;
+ALTER DEFAULT PRIVILEGES FOR ROLE hms_app IN SCHEMA public GRANT ALL ON TABLES TO hms_app;
+ALTER DEFAULT PRIVILEGES FOR ROLE hms_app IN SCHEMA public GRANT ALL ON SEQUENCES TO hms_app;
+
 CREATE OR REPLACE FUNCTION current_tenant() RETURNS TEXT AS $$
     SELECT current_setting('app.tenant_id', true);
 $$ LANGUAGE sql STABLE;
@@ -130,6 +145,18 @@ CREATE TABLE IF NOT EXISTS room (
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS bed (
+    id           TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    tenant_id    TEXT NOT NULL REFERENCES tenant(id),
+    room_id      TEXT REFERENCES room(id),
+    bed_number   TEXT NOT NULL,
+    category     TEXT DEFAULT 'general',
+    status       TEXT DEFAULT 'available',
+    daily_tariff NUMERIC DEFAULT 0,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS service (
     id               TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
     tenant_id        TEXT NOT NULL REFERENCES tenant(id),
@@ -202,8 +229,11 @@ CREATE TABLE IF NOT EXISTS invoice (
     total_amount           NUMERIC DEFAULT 0,
     payer_responsibility   NUMERIC DEFAULT 0,
     patient_responsibility NUMERIC DEFAULT 0,
-    created_at             TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at             TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+ALTER TABLE invoice ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
 
 CREATE TABLE IF NOT EXISTS medication_catalog (
     id           TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
@@ -546,13 +576,50 @@ CREATE TABLE IF NOT EXISTS integration_log (
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Subscription plan and granular tenant permissions
+CREATE TABLE IF NOT EXISTS subscription_plan (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    code TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    description TEXT,
+    price_inr_monthly NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
+    price_inr_annual NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
+    max_practitioners INTEGER NOT NULL DEFAULT 10,
+    max_beds INTEGER NOT NULL DEFAULT 15,
+    max_monthly_encounters INTEGER NOT NULL DEFAULT 2500,
+    admins_limit INTEGER NOT NULL DEFAULT 5,
+    staff_limit INTEGER NOT NULL DEFAULT 50,
+    custom_catalogs_limit INTEGER NOT NULL DEFAULT 5,
+    catalog_item_limit INTEGER NOT NULL DEFAULT 50,
+    abdm_level TEXT NOT NULL DEFAULT 'M1 + M2 (HIP)',
+    sms_limit INTEGER NOT NULL DEFAULT 1000,
+    email_limit INTEGER NOT NULL DEFAULT 2500,
+    whatsapp_limit INTEGER NOT NULL DEFAULT 5000,
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS tenant_permissions (
+    tenant_id TEXT PRIMARY KEY,
+    permissions JSONB NOT NULL DEFAULT '{}'::jsonb,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO subscription_plan (code, name, description, price_inr_monthly, price_inr_annual, max_practitioners, max_beds, max_monthly_encounters, admins_limit, staff_limit, custom_catalogs_limit, catalog_item_limit, abdm_level, sms_limit, email_limit, whatsapp_limit, active)
+VALUES 
+  ('starter', 'Starter (Clinic)', 'Solo practitioner consultation chambers & outpatient clinics', 1999.00, 19990.00, 2, 0, 500, 1, 3, 0, 15, 'M1 (ABHA)', 200, 500, 1000, TRUE),
+  ('growth', 'Growth (Polyclinic)', 'Multi-specialty outpatient clinics and nursing homes with up to 15 beds', 7999.00, 79990.00, 10, 15, 2500, 5, 50, 5, 50, 'M1 + M2 (HIP)', 1000, 2500, 5000, TRUE),
+  ('enterprise', 'Enterprise (Hospital)', 'Comprehensive multi-department tertiary care hospitals and surgical centers', 24999.00, 249990.00, -1, -1, -1, 99, 9999, 999, 9999, 'M1 + M2 + M3 (HIU)', 10000, 25000, 50000, TRUE)
+ON CONFLICT (code) DO NOTHING;
+
 -- Macro to create remaining child tables dynamically with RLS policies and grants
 DO $$
 DECLARE
     tbl TEXT;
     pol_name TEXT;
     explicit_tables TEXT[] := ARRAY[
-        'patient', 'audit_event', 'patient_consent', 'site', 'room', 'service', 'practitioner', 
+        'patient', 'audit_event', 'patient_consent', 'site', 'room', 'bed', 'service', 'practitioner', 
         'appointment', 'encounter', 'patient_coverage', 'invoice', 'medication_catalog', 
         'lab_catalog', 'lab_order', 'prescription', 'charge_master', 'webhook_subscription', 
         'prerequisite_definition', 'practitioner_availability', 'appointment_prerequisite',
@@ -600,4 +667,9 @@ BEGIN
 END $$;
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON tenant TO hms_app;
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO hms_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON subscription_plan TO hms_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON tenant_permissions TO hms_app;
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO hms_app;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO hms_app;
+GRANT ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA public TO hms_app;
+

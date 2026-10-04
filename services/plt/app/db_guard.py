@@ -12,12 +12,14 @@ from sqlalchemy import text
 
 log = logging.getLogger("hms.db_guard")
 
-# Every tenant-scoped table MUST appear here (44 tenant tables covered).
+# Every tenant-scoped table MUST appear here (46 tenant tables covered).
 RLS_PROTECTED_TABLES: list[str] = [
     "patient",
+    "patient_consent",
     "audit_event",
     "site",
     "room",
+    "bed",
     "service",
     "clinical_service",
     "practitioner",
@@ -99,6 +101,8 @@ async def auto_sync_schema() -> None:
     try:
         admin_engine = create_async_engine(seed_url, echo=False)
         statements = [
+            "GRANT ALL ON SCHEMA public TO hms_app;",
+            "GRANT USAGE, CREATE ON SCHEMA public TO hms_app;",
             "ALTER TABLE patient ADD COLUMN IF NOT EXISTS is_newborn BOOLEAN NOT NULL DEFAULT FALSE;",
             "ALTER TABLE patient ADD COLUMN IF NOT EXISTS mother_patient_id UUID REFERENCES patient(id) ON DELETE SET NULL;",
             "ALTER TABLE patient ADD COLUMN IF NOT EXISTS birth_time TEXT;",
@@ -110,6 +114,25 @@ async def auto_sync_schema() -> None:
             "ALTER TABLE patient ADD COLUMN IF NOT EXISTS apgar_score_5min INTEGER;",
             "CREATE INDEX IF NOT EXISTS ix_patient_mother ON patient (tenant_id, mother_patient_id);",
             "CREATE INDEX IF NOT EXISTS ix_patient_is_newborn ON patient (tenant_id, is_newborn);",
+            "ALTER TABLE invoice ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();",
+            """
+            CREATE TABLE IF NOT EXISTS bed (
+                id           TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+                tenant_id    TEXT NOT NULL REFERENCES tenant(id),
+                room_id      TEXT REFERENCES room(id),
+                bed_number   TEXT NOT NULL,
+                category     TEXT DEFAULT 'general',
+                status       TEXT DEFAULT 'available',
+                daily_tariff NUMERIC DEFAULT 0,
+                created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+                updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+            );
+            """,
+            "ALTER TABLE bed ENABLE ROW LEVEL SECURITY;",
+            "ALTER TABLE bed FORCE ROW LEVEL SECURITY;",
+            "DROP POLICY IF EXISTS bed_isolation ON bed;",
+            "CREATE POLICY bed_isolation ON bed USING (tenant_id = current_tenant()) WITH CHECK (tenant_id = current_tenant());",
+            "GRANT ALL PRIVILEGES ON TABLE bed TO hms_app;",
             """
             CREATE TABLE IF NOT EXISTS subscription_plan (
                 id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -141,7 +164,10 @@ async def auto_sync_schema() -> None:
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             );
             """,
+            "GRANT ALL PRIVILEGES ON TABLE subscription_plan TO hms_app;",
             "GRANT ALL PRIVILEGES ON TABLE tenant_permissions TO hms_app;",
+            "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO hms_app;",
+            "GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO hms_app;",
             """
             INSERT INTO subscription_plan (code, name, description, price_inr_monthly, price_inr_annual, max_practitioners, max_beds, max_monthly_encounters, admins_limit, staff_limit, custom_catalogs_limit, catalog_item_limit, abdm_level, sms_limit, email_limit, whatsapp_limit, active)
             VALUES 
