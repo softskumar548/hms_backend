@@ -135,6 +135,14 @@ async def auto_sync_schema() -> None:
             );
             """,
             """
+            CREATE TABLE IF NOT EXISTS tenant_permissions (
+                tenant_id TEXT PRIMARY KEY,
+                permissions JSONB NOT NULL DEFAULT '{}'::jsonb,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            """,
+            "GRANT ALL PRIVILEGES ON TABLE tenant_permissions TO hms_app;",
+            """
             INSERT INTO subscription_plan (code, name, description, price_inr_monthly, price_inr_annual, max_practitioners, max_beds, max_monthly_encounters, admins_limit, staff_limit, custom_catalogs_limit, catalog_item_limit, abdm_level, sms_limit, email_limit, whatsapp_limit, active)
             VALUES 
               ('starter', 'Starter (Clinic)', 'Solo practitioner consultation chambers & outpatient clinics', 1999.00, 19990.00, 2, 0, 500, 1, 3, 0, 15, 'M1 (ABHA)', 200, 500, 1000, TRUE),

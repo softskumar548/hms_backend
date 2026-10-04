@@ -57,8 +57,16 @@ Every requirement has an ID (`PLT-002`, `REG-001`, `IAM-006`, `TEN-101`, `REF-06
 - **Newborn & Neonate Registration Pipeline (REG-010): BUILT & LIVE**
   - Full mother-infant registration pipeline (`POST /patients/newborn`) with mother UUID/UHID linking (`mother_patient_id`), birth weight, APGAR scores (1 min & 5 min), gestational age (weeks), delivery type (normal, c-section, assisted), birth complications, pediatric specialist assignment, automatic UHID generation, and audit logging.
   - Safe serialization supporting UUID and string representations for mother and infant relationship tracking.
+- **Role-Based Screen & Action Permissions Matrix (19 Roles / 62 Screens): BUILT & LIVE**
+  - Dedicated PostgreSQL `tenant_permissions` JSONB table with auto-sync schema migration in `db_guard.py` (`tenant_id TEXT PRIMARY KEY, permissions JSONB, updated_at TIMESTAMPTZ`).
+  - **Granular Permissions API**:
+    - `GET /tenants/{tenant_id}/permissions`: Retrieves custom role-to-screen matrix with least-privilege boundary (operator or tenant user).
+    - `PUT /tenants/{tenant_id}/permissions`: Persists custom matrix with Pydantic validation (`PermissionRecordSchema`), role gating (strictly restricted to `admin` or `operator`), and idempotent upsert (`INSERT ... ON CONFLICT DO UPDATE`).
+  - **Admin Lockout Safeguard**: Backend engine automatically overrides malicious or accidental lockout payloads, permanently guaranteeing `admin_user_auth` remains `isAccessible: True`, `canRead: True`, and `canUpdate: True` for `Administrator` and `Super Administrator`.
+  - **Audit Logging**: Every permissions update automatically dispatches immutable transaction audit events (`resource_type="tenant_permissions"`).
+  - **100% Passing Test Coverage**: Verified across `tests/test_permissions_matrix.py` (7 tests) and `tests/test_tenant_onboarding.py` (5 tests).
 - **Self-Healing Database & Schema Sync on Startup: BUILT & LIVE**
-  - Automatic runtime schema verification and DDL column synchronization (`mother_patient_id`, `birth_details`, `subscription_quotas`) on FastAPI application boot ensuring production and staging database parity.
+  - Automatic runtime schema verification and DDL column synchronization (`mother_patient_id`, `birth_details`, `subscription_quotas`, `tenant_permissions`) on FastAPI application boot ensuring production and staging database parity.
 - **Auth: real Keycloak/OIDC is LIVE** — RS256 validation with JWKS caching,
   `app.tenant_id` custom claim → `RequestContext`, roles from `realm_access.roles`.
   Declarative user profile enables `tenant_id` attribute propagation to tokens.

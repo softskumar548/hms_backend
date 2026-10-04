@@ -43,6 +43,8 @@ from .tenants_schemas import (
     TenantMetricsOut,
     TenantOut,
     TenantOverridePayload,
+    TenantPermissionsOut,
+    TenantPermissionsPayload,
     TenantQuotaUsageOut,
     TenantStatusUpdate,
     TenantSuspendPayload,
@@ -2084,4 +2086,130 @@ async def offboard_tenant(
         "tenant_id": tenant_id,
         "deleted_tables_summary": counts,
     }
+
+
+async def _ensure_tenant_permissions_table(s: AsyncSession) -> None:
+    """Idempotently ensure tenant_permissions table exists using a savepoint."""
+    try:
+        async with s.begin_nested():
+            await s.execute(text("""
+                CREATE TABLE IF NOT EXISTS tenant_permissions (
+                    tenant_id TEXT PRIMARY KEY,
+                    permissions JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+            """))
+    except Exception:
+        pass
+
+
+@router.get("/{tenant_id}/permissions", response_model=TenantPermissionsOut)
+async def get_tenant_permissions(
+    tenant_id: str,
+    request: Request,
+    ctx: RequestContext = Depends(auth),
+    session: AsyncSession = Depends(get_session),
+):
+    """Retrieve custom role-to-screen permissions matrix for a tenant."""
+    # Check permissions: operator or user belonging to this tenant
+    if ctx.role != "operator" and ctx.tenant_id != tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied: Cannot access permissions for another tenant."
+        )
+
+    async with tenant_session(session, ctx, tenant_id=tenant_id) as s:
+        await _ensure_tenant_permissions_table(s)
+        row = None
+        try:
+            async with s.begin_nested():
+                row = (
+                    await s.execute(
+                        text("SELECT tenant_id, permissions, updated_at FROM tenant_permissions WHERE tenant_id = :tid").bindparams(tid=tenant_id)
+                    )
+                ).mappings().one_or_none()
+        except Exception:
+            pass
+
+        if not row or not row.get("permissions"):
+            return TenantPermissionsOut(
+                tenant_id=tenant_id,
+                permissions={},
+                updated_at=datetime.now(timezone.utc).isoformat()
+            )
+
+        perms = row["permissions"]
+        if isinstance(perms, str):
+            try:
+                perms = json.loads(perms)
+            except Exception:
+                perms = {}
+
+        return TenantPermissionsOut(
+            tenant_id=tenant_id,
+            permissions=perms,
+            updated_at=row["updated_at"].isoformat() if hasattr(row.get("updated_at"), "isoformat") else str(row.get("updated_at") or "")
+        )
+
+
+@router.put("/{tenant_id}/permissions", response_model=TenantPermissionsOut)
+async def update_tenant_permissions(
+    tenant_id: str,
+    body: TenantPermissionsPayload,
+    request: Request,
+    ctx: RequestContext = Depends(auth),
+    session: AsyncSession = Depends(get_session),
+):
+    """Update and persist custom role-to-screen permissions matrix for a tenant."""
+    # Only tenant admin or platform operator can update permissions
+    if ctx.role != "operator" and (ctx.role != "admin" or ctx.tenant_id != tenant_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied: Only tenant administrators or platform operators can modify screen permissions."
+        )
+
+    # Edge Case Safeguard: Prevent Admin / Super Admin lockout on admin_user_auth
+    raw_perms = {
+        role: {screen_id: rec.model_dump() for screen_id, rec in role_dict.items()}
+        for role, role_dict in body.permissions.items()
+    }
+
+    # Enforce lockout protection for admin roles
+    for admin_role in ["Administrator", "Super Administrator", "admin", "operator"]:
+        if admin_role in raw_perms:
+            if "admin_user_auth" in raw_perms[admin_role]:
+                raw_perms[admin_role]["admin_user_auth"]["isAccessible"] = True
+                raw_perms[admin_role]["admin_user_auth"]["canRead"] = True
+                raw_perms[admin_role]["admin_user_auth"]["canUpdate"] = True
+
+    async with tenant_session(session, ctx, tenant_id=tenant_id) as s:
+        await _ensure_tenant_permissions_table(s)
+        now = datetime.now(timezone.utc)
+        perms_json = json.dumps(raw_perms)
+
+        async with s.begin_nested():
+            await s.execute(
+                text("""
+                    INSERT INTO tenant_permissions (tenant_id, permissions, updated_at)
+                    VALUES (:tid, CAST(:perms AS JSONB), :now)
+                    ON CONFLICT (tenant_id) DO UPDATE
+                    SET permissions = EXCLUDED.permissions,
+                        updated_at = EXCLUDED.updated_at
+                """).bindparams(tid=tenant_id, perms=perms_json, now=now)
+            )
+
+        await audit_record(
+            session=s,
+            ctx=ctx,
+            action="update",
+            resource_type="tenant_permissions",
+            context_note=f"Updated role-to-screen permission matrix for tenant '{tenant_id}'",
+        )
+
+        return TenantPermissionsOut(
+            tenant_id=tenant_id,
+            permissions=raw_perms,
+            updated_at=now.isoformat()
+        )
+
 

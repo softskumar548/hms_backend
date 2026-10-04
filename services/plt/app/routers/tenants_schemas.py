@@ -354,3 +354,26 @@ class TenantQuotaUsageOut(BaseModel):
     quotas: list[QuotaUsageItem] = Field(default_factory=list)
 
 
+class PermissionRecordSchema(BaseModel):
+    isAccessible: bool = Field(default=True)
+    canCreate: bool = Field(default=False)
+    canRead: bool = Field(default=True)
+    canUpdate: bool = Field(default=False)
+    canDelete: bool = Field(default=False)
+
+
+class TenantPermissionsPayload(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    permissions: dict[str, dict[str, PermissionRecordSchema]] = Field(
+        ...,
+        description="Role-to-screen permissions mapping"
+    )
+
+
+class TenantPermissionsOut(BaseModel):
+    tenant_id: str
+    permissions: dict[str, dict[str, Any]]
+    updated_at: str | None = None
+
+
+

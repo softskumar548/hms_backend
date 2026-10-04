@@ -213,3 +213,154 @@ def test_tenant_admin_can_invite_doctor_with_password():
     client.delete(f"/tenants/{tid}", headers=op_headers)
 
 
+def test_tenant_screen_permissions_matrix_lifecycle():
+    """Verify role-to-screen permissions matrix retrieval, persistence, and Admin lockout protection."""
+    op_headers = {"Authorization": "Bearer dev.__operator__.operator"}
+    tid = f"hosp_perm_{uuid.uuid4().hex[:6]}"
+
+    # 1. Provision tenant
+    client.post("/tenants", json={
+        "id": tid,
+        "name": "Permission Matrix Test Hospital",
+        "region": "india",
+        "locale": "en-IN",
+        "currency": "INR",
+    }, headers=op_headers)
+
+    admin_headers = {"Authorization": f"Bearer dev.{tid}.admin"}
+    other_admin_headers = {"Authorization": "Bearer dev.other_tenant.admin"}
+
+    # 2. Get initial permissions
+    get_resp = client.get(f"/tenants/{tid}/permissions", headers=admin_headers)
+    assert get_resp.status_code == 200
+    assert get_resp.json()["tenant_id"] == tid
+
+    # 3. Update permissions for Doctor and attempt admin lockout on Administrator
+    perm_payload = {
+        "permissions": {
+            "Doctor": {
+                "dashboard_home": {
+                    "isAccessible": True,
+                    "canCreate": False,
+                    "canRead": True,
+                    "canUpdate": False,
+                    "canDelete": False
+                },
+                "opd_appointments": {
+                    "isAccessible": True,
+                    "canCreate": True,
+                    "canRead": True,
+                    "canUpdate": True,
+                    "canDelete": False
+                }
+            },
+            "Administrator": {
+                "admin_user_auth": {
+                    # Attempt to lock out admin
+                    "isAccessible": False,
+                    "canCreate": False,
+                    "canRead": False,
+                    "canUpdate": False,
+                    "canDelete": False
+                }
+            }
+        }
+    }
+
+    put_resp = client.put(f"/tenants/{tid}/permissions", json=perm_payload, headers=admin_headers)
+    assert put_resp.status_code == 200
+    put_data = put_resp.json()
+    assert put_data["tenant_id"] == tid
+    
+    # Assert Doctor permissions persisted
+    assert put_data["permissions"]["Doctor"]["opd_appointments"]["canCreate"] is True
+    
+    # Assert Admin Lockout Prevention: Backend forced isAccessible=True and canRead=True for Administrator
+    assert put_data["permissions"]["Administrator"]["admin_user_auth"]["isAccessible"] is True
+    assert put_data["permissions"]["Administrator"]["admin_user_auth"]["canRead"] is True
+
+    # 4. Cross-tenant access attempt should fail with 403 Forbidden
+    cross_resp = client.put(f"/tenants/{tid}/permissions", json=perm_payload, headers=other_admin_headers)
+    assert cross_resp.status_code == 403
+
+    # Teardown
+    client.delete(f"/tenants/{tid}", headers=op_headers)
+
+
+def test_tenant_permissions_edge_cases():
+    """Verify edge cases for tenant screen permissions: non-admin rejection, operator override, idempotent upsert, and multiple role matrices."""
+    op_headers = {"Authorization": "Bearer dev.__operator__.operator"}
+    tid = f"perm_edge_{uuid.uuid4().hex[:6]}"
+
+    # 1. Provision tenant
+    client.post("/tenants", json={
+        "id": tid,
+        "name": "Permission Edge Case Clinic",
+        "region": "india",
+        "locale": "en-IN",
+        "currency": "INR",
+    }, headers=op_headers)
+
+    admin_headers = {"Authorization": f"Bearer dev.{tid}.admin"}
+    doctor_headers = {"Authorization": f"Bearer dev.{tid}.physician"}
+    reception_headers = {"Authorization": f"Bearer dev.{tid}.receptionist"}
+    billing_headers = {"Authorization": f"Bearer dev.{tid}.billing"}
+    other_user_headers = {"Authorization": "Bearer dev.other_clinic.physician"}
+
+    # Edge Case 1: Non-admin staff (Doctor, Receptionist, Biller) attempting to modify permissions should get 403
+    for headers in [doctor_headers, reception_headers, billing_headers]:
+        resp = client.put(f"/tenants/{tid}/permissions", json={"permissions": {}}, headers=headers)
+        assert resp.status_code == 403, f"Expected 403 for non-admin headers, got {resp.status_code}"
+
+    # Edge Case 2: Cross-tenant user attempting to read permissions should get 403
+    cross_read = client.get(f"/tenants/{tid}/permissions", headers=other_user_headers)
+    assert cross_read.status_code == 403
+
+    # Edge Case 3: Operator break-glass access should succeed for both GET and PUT
+    op_get = client.get(f"/tenants/{tid}/permissions", headers=op_headers)
+    assert op_get.status_code == 200
+
+    # Edge Case 4: Persisting 19 roles with partial and complete screens
+    all_19_roles_payload = {
+        "permissions": {
+            "Administrator": {"admin_user_auth": {"isAccessible": True, "canCreate": True, "canRead": True, "canUpdate": True, "canDelete": True}},
+            "Super Administrator": {"admin_user_auth": {"isAccessible": True, "canCreate": True, "canRead": True, "canUpdate": True, "canDelete": True}},
+            "Doctor": {"opd_medical_records": {"isAccessible": True, "canCreate": True, "canRead": True, "canUpdate": True, "canDelete": False}},
+            "Nurse": {"ipd_bed_status": {"isAccessible": True, "canCreate": False, "canRead": True, "canUpdate": True, "canDelete": False}},
+            "Pharmacist": {"pharma_bill": {"isAccessible": True, "canCreate": True, "canRead": True, "canUpdate": True, "canDelete": False}},
+            "Pharmacy Incharge": {"pharma_stock": {"isAccessible": True, "canCreate": True, "canRead": True, "canUpdate": True, "canDelete": True}},
+            "Lab Assistant": {"lab_bill_history": {"isAccessible": True, "canCreate": True, "canRead": True, "canUpdate": True, "canDelete": False}},
+            "Lab Incharge": {"lab_rate_plan_master": {"isAccessible": True, "canCreate": True, "canRead": True, "canUpdate": True, "canDelete": True}},
+            "Radiographer": {"rad_usg_cases": {"isAccessible": True, "canCreate": True, "canRead": True, "canUpdate": True, "canDelete": False}},
+            "Receptionist": {"opd_appointments": {"isAccessible": True, "canCreate": True, "canRead": True, "canUpdate": True, "canDelete": False}},
+            "Billing": {"opd_bills": {"isAccessible": True, "canCreate": True, "canRead": True, "canUpdate": True, "canDelete": False}},
+            "HR": {"hr_employees": {"isAccessible": True, "canCreate": True, "canRead": True, "canUpdate": True, "canDelete": True}},
+            "Accountant": {"hr_payroll_dashboard": {"isAccessible": True, "canCreate": True, "canRead": True, "canUpdate": True, "canDelete": False}},
+            "MRD": {"opd_medical_records": {"isAccessible": True, "canCreate": False, "canRead": True, "canUpdate": False, "canDelete": False}},
+            "MOD": {"emergency_triages": {"isAccessible": True, "canCreate": True, "canRead": True, "canUpdate": True, "canDelete": False}},
+            "Marketing Executive": {"crm_lead_mgmt": {"isAccessible": True, "canCreate": True, "canRead": True, "canUpdate": True, "canDelete": False}},
+            "Tele Caller": {"crm_contacts": {"isAccessible": True, "canCreate": True, "canRead": True, "canUpdate": True, "canDelete": False}},
+            "Store Management": {"more_inventory_items": {"isAccessible": True, "canCreate": True, "canRead": True, "canUpdate": True, "canDelete": True}},
+            "Staff": {"dashboard_home": {"isAccessible": True, "canCreate": False, "canRead": True, "canUpdate": False, "canDelete": False}},
+        }
+    }
+
+    op_put = client.put(f"/tenants/{tid}/permissions", json=all_19_roles_payload, headers=op_headers)
+    assert op_put.status_code == 200
+    saved_perms = op_put.json()["permissions"]
+    assert len(saved_perms) == 19
+    assert saved_perms["Pharmacist"]["pharma_bill"]["canCreate"] is True
+    assert saved_perms["HR"]["hr_employees"]["canDelete"] is True
+
+    # Edge Case 5: Idempotent overwrite and update
+    all_19_roles_payload["permissions"]["Doctor"]["opd_medical_records"]["canDelete"] = True
+    update_resp = client.put(f"/tenants/{tid}/permissions", json=all_19_roles_payload, headers=admin_headers)
+    assert update_resp.status_code == 200
+    assert update_resp.json()["permissions"]["Doctor"]["opd_medical_records"]["canDelete"] is True
+
+    # Teardown
+    client.delete(f"/tenants/{tid}", headers=op_headers)
+
+
+
+

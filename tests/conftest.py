@@ -7,6 +7,10 @@ from sqlalchemy import text
 # Explicitly set test environment variables for unit test suite execution
 os.environ["ENV"] = "test"
 os.environ["HMS_ALLOW_MOCK_DB"] = "true"
+os.environ["SEED_DATABASE_URL"] = os.environ.get(
+    "SEED_DATABASE_URL",
+    "postgresql+asyncpg://postgres:postgres_change_me@localhost:5432/hms",
+)
 
 DATABASE_URL = os.environ.get(
     "DATABASE_URL",
@@ -24,23 +28,38 @@ async def verify_no_leftover_test_tenants():
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     SEED_TENANTS = {"apollo", "apollo_vizag", "kims_guntur", "gsl_rajahmundry", "care_vizag", "medisys_kakinada", "kims", "NIMS_BLR", "t_a", "t_b"}
     
+    # Ensure schema updates and grants are synced
+    try:
+        from app.db_guard import auto_sync_schema
+        await auto_sync_schema()
+    except Exception:
+        pass
+
     # Pre-test cleanup of any leftover test tenants from previous interrupted test runs
     try:
-        async with session_factory() as s:
-            t_ids = (await s.execute(text("SELECT id FROM tenant WHERE id LIKE 'test_%' OR id LIKE 't_%' OR id LIKE 'e2e%' OR name LIKE 'Test%' OR name LIKE 'Temp%' OR name LIKE 'Suspension%' OR name LIKE '%E2E%'"))).scalars().all()
+        admin_engine = create_async_engine(os.environ["SEED_DATABASE_URL"])
+        async with admin_engine.connect() as conn:
+            t_ids = (await conn.execute(text("SELECT id FROM tenant WHERE id LIKE 'test_%' OR id LIKE 't_%' OR id LIKE 'e2e%' OR id LIKE 'hosp_%' OR name LIKE 'Test%' OR name LIKE 'Temp%' OR name LIKE 'Suspension%' OR name LIKE '%E2E%' OR name LIKE 'Permission Matrix%'"))).scalars().all()
             if t_ids:
                 for tid in t_ids:
+                    # Discover all tables in 'public' schema with a 'tenant_id' column
+                    t_tables = (await conn.execute(text(
+                        "SELECT table_name FROM information_schema.columns "
+                        "WHERE table_schema = 'public' AND column_name = 'tenant_id'"
+                    ))).scalars().all()
+                    for tbl in t_tables:
+                        if tbl not in ("tenant", "audit_event"):
+                            try:
+                                async with conn.begin():
+                                    await conn.execute(text(f'DELETE FROM "{tbl}" WHERE tenant_id = :tid').bindparams(tid=tid))
+                            except Exception:
+                                pass
                     try:
-                        await s.execute(text(f"SET app.tenant_id = '{tid}'"))
-                        await s.execute(text(f"DELETE FROM practitioner WHERE tenant_id = '{tid}'"))
-                        await s.execute(text(f"DELETE FROM encounter WHERE tenant_id = '{tid}'"))
-                        await s.execute(text(f"DELETE FROM patient WHERE tenant_id = '{tid}'"))
-                        await s.execute(text(f"DELETE FROM tenant_config WHERE tenant_id = '{tid}'"))
-                        await s.execute(text("RESET app.tenant_id"))
-                        await s.execute(text(f"DELETE FROM tenant WHERE id = '{tid}'"))
+                        async with conn.begin():
+                            await conn.execute(text("DELETE FROM tenant WHERE id = :tid").bindparams(tid=tid))
                     except Exception:
                         pass
-                await s.commit()
+        await admin_engine.dispose()
     except Exception:
         pass
 
