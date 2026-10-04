@@ -2177,10 +2177,22 @@ async def update_tenant_permissions(
     # Enforce lockout protection for admin roles
     for admin_role in ["Administrator", "Super Administrator", "admin", "operator"]:
         if admin_role in raw_perms:
-            if "admin_user_auth" in raw_perms[admin_role]:
-                raw_perms[admin_role]["admin_user_auth"]["isAccessible"] = True
-                raw_perms[admin_role]["admin_user_auth"]["canRead"] = True
-                raw_perms[admin_role]["admin_user_auth"]["canUpdate"] = True
+            user_auth_rec = raw_perms[admin_role].get("admin_user_auth", {})
+            raw_perms[admin_role]["admin_user_auth"] = {
+                "isAccessible": True,
+                "canCreate": user_auth_rec.get("canCreate", True),
+                "canRead": True,
+                "canUpdate": True,
+                "canDelete": user_auth_rec.get("canDelete", False),
+            }
+            acct_settings_rec = raw_perms[admin_role].get("admin_account_settings", {})
+            raw_perms[admin_role]["admin_account_settings"] = {
+                "isAccessible": True,
+                "canCreate": acct_settings_rec.get("canCreate", True),
+                "canRead": True,
+                "canUpdate": True,
+                "canDelete": acct_settings_rec.get("canDelete", False),
+            }
 
     async with tenant_session(session, ctx, tenant_id=tenant_id) as s:
         await _ensure_tenant_permissions_table(s)
